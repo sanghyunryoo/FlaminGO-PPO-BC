@@ -179,13 +179,6 @@ class ActionsCfg:
         use_default_offset=False,
         preserve_order=True,
     )
-    wheel_vel = mdp.JointVelocityActionCfg(
-        asset_name="robot",
-        joint_names=["left_wheel_joint", "right_wheel_joint"],
-        scale=20.0,
-        use_default_offset=False,
-        preserve_order=True
-    )
 
 
 @configclass
@@ -207,7 +200,7 @@ class ObservationsCfg:
         joint_vel = ObsTerm(
             func=mdp.joint_vel_leg_gear, 
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint", ".*_wheel_joint"]),
+                "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint"]),
                 "gear_ratio": -1.5,
             },            
             scale=0.15)  # default: -1.5     
@@ -295,7 +288,7 @@ class ObservationsCfg:
         joint_vel = ObsTerm(
             func=mdp.joint_vel_leg_gear, 
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint", ".*_wheel_joint"]),
+                "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint"]),
                 "gear_ratio": -1.5,
             },            
             scale=0.15)  # default: -1.5     
@@ -307,30 +300,6 @@ class ObservationsCfg:
             self.enable_corruption = True
             self.concatenate_terms = True
 
-    @configclass
-    class TeacherStackPolicyCfg(ObsGroup):
-        """Observations for Stack policy group."""
-        joint_pos = ObsTerm(
-            func=mdp.joint_pos_leg_gear,
-            params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint"]),
-                "gear_ratio": -1.5,
-            },
-        )
-        joint_vel = ObsTerm(
-            func=mdp.joint_vel_leg_gear, 
-            params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint"]),
-                "gear_ratio": -1.5,
-            },            
-            scale=0.15)  # default: -1.5     
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel_link, noise=Unoise(n_min=-0.15, n_max=0.15), scale=0.25)  # default: -0.15
-        base_projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))  # default: -0.05
-        actions = ObsTerm(func=mdp.last_action_wo_wheel)
-
-        def __post_init__(self):
-            self.enable_corruption = True
-            self.concatenate_terms = True
 
     @configclass
     class NoneStackPolicyCfg(ObsGroup):
@@ -361,46 +330,9 @@ class ObservationsCfg:
                 "sensor_cfg_right": SceneEntityCfg("right_mask_sensor"),
                 },
         )
-
-    @configclass
-    class TeacherNoneStackPolicyCfg(ObsGroup):
-        """Observations for None-Stack policy group."""
-        velocity_commands = ObsTerm(func=mdp.generated_scaled_commands, params={"command_name": "base_velocity", "scale": (2.0, 0.0, 0.25)})
-        roll_pitch_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "roll_pitch"})
-        event_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "event"})
-        height_scan = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner"), 'offset': 0.0},
-            clip=(-1.0, 1.0),
-            noise=Unoise(n_min=-0.1, n_max=0.1),
-        )
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel_x_link, scale=2.0)
-        base_pos_z = ObsTerm(func=mdp.base_pos_z_rel_link, params={"sensor_cfg": SceneEntityCfg("base_height_scanner")})
-        current_reward = ObsTerm(func=mdp.current_reward)
-        is_contact = ObsTerm(
-            func=mdp.is_contact,
-            params={
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_wheel_link"]),
-                "threshold": 1.0,
-            },
-        )
-        lift_mask = ObsTerm(
-            func=mdp.lift_mask_by_height_scan,
-            params={
-                "sensor_cfg_left": SceneEntityCfg("left_mask_sensor"),
-                "sensor_cfg_right": SceneEntityCfg("right_mask_sensor"),
-                },
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = True
-            self.concatenate_terms = True
-
     # observation groups
     stack_policy: StackPolicyCfg = StackPolicyCfg()
-    teacher_stack_policy: TeacherStackPolicyCfg = TeacherStackPolicyCfg()
     none_stack_policy: NoneStackPolicyCfg = NoneStackPolicyCfg()
-    teacher_none_stack_policy: TeacherNoneStackPolicyCfg = TeacherNoneStackPolicyCfg()
     stack_critic: StackCriticCfg = StackCriticCfg()
     none_stack_critic: NoneStackCriticCfg = NoneStackCriticCfg()
 

@@ -104,9 +104,27 @@ class ActorCritic(nn.Module):
         self.update_distribution(observations)
         return self.distribution.sample()
 
+    def dist(self, mean, sigma):
+        return Normal(mean, mean * 0.0 + sigma)
+    
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
+
+    def get_partial_log_prob(self, actions, dims: int = None):
+        """
+        일부 차원에 대해서만 log_prob을 계산한다.
+        - actions: teacher action (shape: [B, dims])
+        - dims: 사용할 action 차원 수 (예: 6)
+        """
+        if dims is None or dims == self.distribution.mean.shape[-1]:
+            return self.get_actions_log_prob(actions)
+
+        mean = self.distribution.mean[:, :dims]
+        std = self.distribution.stddev[:, :dims]
+        dist = Normal(mean, std)
+        return dist.log_prob(actions).sum(dim=-1)
+    
     def act_inference(self, observations):
         actions_mean = self.actor(observations)
         return actions_mean

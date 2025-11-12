@@ -61,6 +61,12 @@ def ang_vel_xy_link_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scene
     asset: RigidObject = env.scene[asset_cfg.name]
     return torch.sum(torch.square(asset.data.root_link_ang_vel_b[:, :2]), dim=1)
 
+def ang_vel_z_link_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize z-axis base angular velocity using L2 squared kernel."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.square(asset.data.root_link_ang_vel_b[:, 2])
+
 def track_pos_z_exp(
     env: ManagerBasedRLEnv,
     temperature: float,
@@ -229,7 +235,7 @@ def feet_air_time_positive_biped(env: ManagerBasedRLEnv, command_name: str, thre
     in_mode_time = torch.where(in_contact, contact_time, air_time)
     single_stance = torch.sum(in_contact.int(), dim=1) == 1
     reward = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
-    reward = torch.clamp(reward, max=threshold)
+    # reward = torch.clamp(reward, max=threshold)
     # no reward for zero command
     reward *= torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.1
     return reward
@@ -1308,3 +1314,50 @@ def foot_clearance_reward(
         foot_clearance = torch.exp(-torch.sum(foot_z_target_error * foot_velocity_tanh, dim=1) / std)
 
     return foot_clearance
+
+def stay_alive(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Reward for staying alive."""
+    return torch.ones(env.num_envs, device=env.device)
+
+def stand_still(
+    env, lin_threshold: float = 0.05, ang_threshold: float = 0.05, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """
+    penalizing linear and angular motion when command velocities are near zero.
+    """
+
+    asset = env.scene[asset_cfg.name]
+    base_lin_vel = asset.data.root_lin_vel_w[:, :2]
+    base_ang_vel = asset.data.root_ang_vel_w[:, -1]
+
+    commands = env.command_manager.get_command("base_velocity")
+
+    lin_commands = commands[:, :2]
+    ang_commands = commands[:, 2]
+
+    reward_lin = torch.sum(
+        torch.abs(base_lin_vel) * (torch.norm(lin_commands, dim=1, keepdim=True) < lin_threshold), dim=-1
+    )
+
+    reward_ang = torch.abs(base_ang_vel) * (torch.abs(ang_commands) < ang_threshold)
+
+    total_reward = reward_lin + reward_ang
+    return total_reward
+
+def leg_symmetry(env: ManagerBasedRLEnv,
+    std: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),) -> torch.Tensor:
+    """Reward regulate abad joint position."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+    feet_pos_w = asset.data.body_link_pos_w[:, asset_cfg.body_ids]
+    base_quat = asset.data.root_link_quat_w.unsqueeze(1).expand(-1, 2, -1)
+    # assert (compute_rotation_distance(asset.data.root_com_quat_w, asset.data.root_link_quat_w) < 0.1).all()
+    base_pos = asset.data.root_link_state_w[:, :3].unsqueeze(1).expand(-1, 2, -1)
+    feet_pos_b = math_utils.quat_rotate_inverse(
+        base_quat,
+        feet_pos_w - base_pos,
+    )
+    leg_symmetry_err = torch.abs(feet_pos_b[:, 0, 1]) - torch.abs(feet_pos_b[:, 1, 1])
+
+    return torch.exp(-leg_symmetry_err ** 2 / std**2)

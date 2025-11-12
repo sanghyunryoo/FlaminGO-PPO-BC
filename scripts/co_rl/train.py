@@ -22,11 +22,17 @@ parser.add_argument("--video_interval", type=int, default=2000, help="Interval b
 parser.add_argument("--num_envs", type=int, default=4096, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--algo", type=str, default="ppo", help="Name of the task.")
+
 parser.add_argument("--seed", type=int, default=42, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument("--experiment_description", type=str, default=None, help="Description of the experiment.")
 parser.add_argument("--num_policy_stacks", type=int, default=2, help="Number of policy stacks.")
+parser.add_argument("--num_teacher_stacks", type=int, default=2, help="Number of policy stacks.")
 parser.add_argument("--num_critic_stacks", type=int, default=2, help="Number of critic stacks.")
+
+# ==== BC / teacher policy options ====
+parser.add_argument("--bc", type=str, default=None,
+                    help="Path to teacher checkpoint (actor-only or full). Enables PPO+BC if set.")
 
 # append CO-RL cli arguments
 cli_args.add_co_rl_args(parser)
@@ -51,7 +57,6 @@ import gymnasium as gym
 import os
 import torch
 from datetime import datetime
-
 from core.runners import OnPolicyRunner, SRMOnPolicyRunner
 
 from isaaclab.envs import (
@@ -98,19 +103,29 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg | Man
         else agent_cfg.experiment_description
     )
     agent_cfg.num_policy_stacks = args_cli.num_policy_stacks if args_cli.num_policy_stacks is not None else agent_cfg.num_policy_stacks
+    agent_cfg.num_teacher_stacks = args_cli.num_teacher_stacks if args_cli.num_teacher_stacks is not None else agent_cfg.num_teacher_stacks
     agent_cfg.num_critic_stacks = args_cli.num_critic_stacks if args_cli.num_critic_stacks is not None else agent_cfg.num_critic_stacks
 
-    is_off_policy = False if agent_cfg.to_dict()["algorithm"]["class_name"] in ["PPO", "SRMPPO"] else True
+
+    is_off_policy = False if agent_cfg.to_dict()["algorithm"]["class_name"] in ["PPO", "PPO_BC", "SRMPPO"] else True
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "co_rl", agent_cfg.experiment_name, args_cli.algo)
     log_root_path = os.path.abspath(log_root_path)
+
+    if args_cli.bc is not None:
+        teacher_log_root_path = os.path.join("logs", "co_rl", agent_cfg.experiment_name, "ppo")
+        teacher_log_root_path = os.path.abspath(teacher_log_root_path)
+
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs: {time-stamp}_{run_name}
     log_dir = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if agent_cfg.run_name:
         log_dir += f"_{agent_cfg.run_name}"
     log_dir = os.path.join(log_root_path, log_dir)
+    # ==== BC options ====
+    if args_cli.bc is not None:
+        agent_cfg.bc_ckpt = get_checkpoint_path(teacher_log_root_path, args_cli.bc, agent_cfg.load_checkpoint) 
     # This way, the Ray Tune workflow can extract experiment name.
     print(f"Exact experiment name requested from command line: {log_dir}")
     # create isaac environment
@@ -146,8 +161,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg | Man
     else:
         if args_cli.algo == "srmppo":
             runner = SRMOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
-        elif args_cli.algo == "ppo":
+        elif args_cli.algo in ["ppo", "ppo_bc"]:
             runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # save resume path before creating a new log_dir

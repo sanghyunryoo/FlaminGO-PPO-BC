@@ -84,7 +84,7 @@ FLAMINGO4W4L_CFG = ArticulationCfg(
         ),
         "joints_l": DelayedPDActuatorCfg(
             joint_names_expr=[".*_leg_joint"],
-            effort_limit=90.0,
+            effort_limit=90.0*1.5, # multiplied by 1.5 because of the gear ratio of 1.5:1
             velocity_limit=13.0,
             min_delay=0,  # physics time steps (min: 5.0 * 0 = 0.0ms)
             max_delay=4,  # physics time steps (max: 5.0 * 4 = 20.0ms)

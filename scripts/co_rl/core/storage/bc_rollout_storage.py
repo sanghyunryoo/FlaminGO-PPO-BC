@@ -9,10 +9,11 @@ import torch
 from scripts.co_rl.core.utils import split_and_pad_trajectories
 
 
-class RolloutStorage:
+class BC_RolloutStorage:
     class Transition:
         def __init__(self):
             self.observations = None
+            self.teacher_observations = None
             self.critic_observations = None
             self.actions = None
             self.rewards = None
@@ -26,11 +27,12 @@ class RolloutStorage:
         def clear(self):
             self.__init__()
 
-    def __init__(self, cfg, num_envs, num_transitions_per_env, obs_shape, privileged_obs_shape, actions_shape, device="cpu"):
+    def __init__(self, cfg, num_envs, num_transitions_per_env, obs_shape, teacher_obs_shape, privileged_obs_shape, actions_shape, device="cpu"):
         self.cfg = cfg
         self.device = device
 
         self.obs_shape = obs_shape
+        self.teacher_obs_shape = teacher_obs_shape
         self.privileged_obs_shape = privileged_obs_shape
         self.actions_shape = actions_shape
 
@@ -42,6 +44,14 @@ class RolloutStorage:
             )
         else:
             self.privileged_observations = None
+
+        if teacher_obs_shape[0] is not None:
+            self.teacher_observations = torch.zeros(
+                num_transitions_per_env, num_envs, *teacher_obs_shape, device=self.device
+            )
+        else:
+            self.teacher_observations = None
+
         self.rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
         self.actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
         if "use_constraint_rl" in self.cfg:
@@ -75,6 +85,9 @@ class RolloutStorage:
         self.observations[self.step].copy_(transition.observations)
         if self.privileged_observations is not None:
             self.privileged_observations[self.step].copy_(transition.critic_observations)
+        if self.teacher_observations is not None:
+            self.teacher_observations[self.step].copy_(transition.teacher_observations)
+
         self.actions[self.step].copy_(transition.actions)
         self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
         self.dones[self.step].copy_(transition.dones.view(-1, 1))
@@ -145,6 +158,11 @@ class RolloutStorage:
         else:
             critic_observations = observations
 
+        if self.teacher_observations is not None:
+            teacher_observations = self.teacher_observations.flatten(0, 1)
+        else:
+            teacher_observations = observations 
+
         actions = self.actions.flatten(0, 1)
         values = self.values.flatten(0, 1)
         returns = self.returns.flatten(0, 1)
@@ -160,6 +178,7 @@ class RolloutStorage:
                 batch_idx = indices[start:end]
 
                 obs_batch = observations[batch_idx]
+                teacher_batch = teacher_observations[batch_idx]
                 critic_observations_batch = critic_observations[batch_idx]
                 actions_batch = actions[batch_idx]
                 target_values_batch = values[batch_idx]
@@ -168,7 +187,7 @@ class RolloutStorage:
                 advantages_batch = advantages[batch_idx]
                 old_mu_batch = old_mu[batch_idx]
                 old_sigma_batch = old_sigma[batch_idx]
-                yield obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (
+                yield obs_batch, teacher_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (
                     None,
                     None,
                 ), None
@@ -233,7 +252,7 @@ class RolloutStorage:
                 ), masks_batch
 
                 first_traj = last_traj
-                
+
     def encoder_mini_batch_generator(self, num_mini_batches, num_epochs=8):
         batch_size = self.num_envs * self.num_transitions_per_env
         mini_batch_size = batch_size // num_mini_batches

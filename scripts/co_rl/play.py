@@ -75,6 +75,7 @@ from scripts.co_rl.core.wrapper import (
     export_env_as_pdf,
     export_policy_as_jit,
     export_policy_as_onnx,
+    export_encoder_as_onnx,
     export_srm_as_onnx,
 )
 
@@ -155,7 +156,7 @@ def main():
     else:
         if args_cli.algo == "srmppo":
             runner = SRMOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-        elif args_cli.algo == "ppo":
+        elif args_cli.algo in ["ppo", "ppo_bc"]:
             runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
 
     runner.load(resume_path)
@@ -168,6 +169,8 @@ def main():
 
     # obtain the trained policy for inference
     policy = runner.get_inference_policy(device=env.unwrapped.device)
+    encoder = runner.get_inference_encoder(device=env.unwrapped.device)
+
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
@@ -184,6 +187,8 @@ def main():
         export_policy_as_onnx(
             runner.alg.actor_critic, normalizer=runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
         )
+        export_encoder_as_onnx(encoder, path=export_model_dir, filename="encoder.onnx")
+
         if args_cli.algo == "srmppo":
             export_srm_as_onnx(
                 runner.alg.srm, runner.alg.srm_fc, device=agent_cfg.device, path=export_model_dir, filename="srm.onnx"
@@ -204,7 +209,8 @@ def main():
                 encoded_obs = runner.alg.encode_obs(obs)
                 actions = policy(encoded_obs)
             else:
-                actions = policy(obs)
+                est = encoder(obs)
+                actions = policy(torch.cat((est, obs), dim=-1).detach())
             clipped_actions = torch.clamp(actions, -1.0, 1.0)
             obs, _, _, extras = env.step(clipped_actions)
         if args_cli.video:

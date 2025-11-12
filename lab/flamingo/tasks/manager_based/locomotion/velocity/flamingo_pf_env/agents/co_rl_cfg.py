@@ -10,6 +10,7 @@ from scripts.co_rl.core.wrapper import (
     CoRlPolicyRunnerCfg,
     CoRlPpoActorCriticCfg,
     CoRlPpoAlgorithmCfg,
+    CoRlSrmPpoAlgorithmCfg,
 )
 
 ######################################## [ PPO CONFIG] ########################################
@@ -51,6 +52,7 @@ class FlamingoPPORunnerCfg(CoRlPolicyRunnerCfg):
         orthogonal_init = False,
     )
 
+
 @configclass
 class FlamingoRoughPPORunnerCfg_Stand_Drive(FlamingoPPORunnerCfg):
     def __post_init__(self):
@@ -89,6 +91,3 @@ class FlamingoRoughPPORunnerCfg_Stand_Drive_Play(FlamingoPPORunnerCfg):
         self.policy.actor_hidden_dims = [512, 256, 128]
         self.policy.critic_hidden_dims = [512, 256, 128]
         self.algorithm.train_joint_idx = [0, 1, 2, 3, 4, 5, 6, 7]
-
-###############################################################################################
-

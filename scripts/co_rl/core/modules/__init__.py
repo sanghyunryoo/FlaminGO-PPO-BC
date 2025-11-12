@@ -7,5 +7,6 @@ from .actor_critic import ActorCritic
 from .actor_critic_recurrent import ActorCriticRecurrent
 from .normalizer import EmpiricalNormalization
 from .replay_memory import ReplayMemory, TACOReplayMemory
+from .mlp_encoder import MLP_Encoder
 
-__all__ = ["ActorCritic", "ActorCriticRecurrent"]
+__all__ = ["ActorCritic", "ActorCriticRecurrent", "MLP_Encoder"]

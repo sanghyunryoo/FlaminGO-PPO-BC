@@ -17,7 +17,7 @@ from isaaclab.sensors import RayCaster
 from isaaclab.utils.math import euler_xyz_from_quat
 from isaaclab.sensors import ContactSensor
 from isaaclab.markers import VisualizationMarkers
-
+from typing import Sequence
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
@@ -228,3 +228,126 @@ def generated_scaled_event_commands(env: ManagerBasedRLEnv, command_name: str, s
     scaled_command = env.command_manager.get_command(command_name).clone()
     scaled_command[:, :2] *= torch.tensor(scale, device=env.device)
     return scaled_command
+
+def feet_contact_force(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg):
+    """contact force of the robot feet"""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    contact_force_tensor = contact_sensor.data.net_forces_w_history.to(device)
+    return contact_force_tensor.view(contact_force_tensor.shape[0], -1)
+
+def mass(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """mass of the robot"""
+    asset: Articulation = env.scene[asset_cfg.name]
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    return asset.data.default_mass.to(device)
+
+def inertia(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """inertia of the robot"""
+    asset: Articulation = env.scene[asset_cfg.name]
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    inertia_tensor = asset.data.default_inertia.to(device)
+    return inertia_tensor.view(inertia_tensor.shape[0], -1)
+
+def joint_stiffness(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """joint stiffness of the robot"""
+    asset: Articulation = env.scene[asset_cfg.name]
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    return asset.data.default_joint_stiffness.to(device)
+
+def joint_damping(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """joint damping of the robot"""
+    asset: Articulation = env.scene[asset_cfg.name]
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    return asset.data.default_joint_damping.to(device)
+
+def center_of_mass(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """center of mass of the robot"""
+    asset: Articulation = env.scene[asset_cfg.name]
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    com_tensor = asset.root_physx_view.get_coms().clone().to(device)
+    return com_tensor.view(com_tensor.shape[0], -1)
+
+def contact_force(env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """The contact forces of the body."""
+    # extract the used quantities (to enable type-hinting)
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+
+    body_contact_force = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids]
+
+    return body_contact_force.reshape(body_contact_force.shape[0], -1)
+
+def feet_lin_vel(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Root linear velocity in the asset's root frame."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return asset.data.body_lin_vel_w[:, asset_cfg.body_ids].flatten(start_dim=1)
+
+
+def last_action_wo_wheel(env: ManagerBasedEnv, action_name: str | None = None) -> torch.Tensor:
+    """The last input action to the environment.
+
+    The name of the action term for which the action is required. If None, the
+    entire action tensor is returned.
+    """
+    if action_name is None:
+        return env.action_manager.action[:, :6]
+    else:
+        return env.action_manager.get_term(action_name).raw_actions[:, :6]
+    
+def joint_pos_leg_gear(
+    env: ManagerBasedEnv,
+    gear_ratio: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return joint positions for the configured joints, applying `gear_ratio`
+    only to right_leg_joint and left_leg_joint.
+
+    Note:
+        - Only joints in `asset_cfg.joint_ids` are returned.
+        - Among them, entries whose names are exactly 'right_leg_joint' or
+          'left_leg_joint' are multiplied by `gear_ratio`. Others are unchanged.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    selected_joint_names: Sequence[str] = [asset.data.joint_names[jid] for jid in asset_cfg.joint_ids]
+    targets = {"right_leg_joint", "left_leg_joint"}
+
+    scale_1d = torch.ones(len(selected_joint_names), dtype=pos.dtype, device=pos.device)
+    for i, name in enumerate(selected_joint_names):
+        if name in targets:
+            scale_1d[i] = gear_ratio
+
+    # Broadcast scale over the batch dimension
+    pos = pos * scale_1d.unsqueeze(0)
+    return pos
+
+def joint_vel_leg_gear(
+    env: ManagerBasedEnv,
+    gear_ratio: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return joint velocities for the configured joints, applying `gear_ratio`
+    only to right_leg_joint and left_leg_joint.
+
+    Note:
+        - Only joints in `asset_cfg.joint_ids` are returned.
+        - Among them, entries whose names are exactly 'right_leg_joint' or
+          'left_leg_joint' are multiplied by `gear_ratio`. Others are unchanged.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    vel = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    selected_joint_names: Sequence[str] = [asset.data.joint_names[jid] for jid in asset_cfg.joint_ids]
+    targets = {"right_leg_joint", "left_leg_joint"}
+
+    scale_1d = torch.ones(len(selected_joint_names), dtype=vel.dtype, device=vel.device)
+    for i, name in enumerate(selected_joint_names):
+        if name in targets:
+            scale_1d[i] = gear_ratio
+
+    # Broadcast scale over the batch dimension
+    vel = vel * scale_1d.unsqueeze(0)
+    return vel
+

@@ -8,5 +8,6 @@ from .srmppo import SRMPPO
 from .sac import SAC
 from .tqc import TQC
 from .taco import TACO
+from .ppo_bc import PPO_BC
 
 __all__ = ["PPO", "SRMPPO", "SAC", "TQC", "TACO"]

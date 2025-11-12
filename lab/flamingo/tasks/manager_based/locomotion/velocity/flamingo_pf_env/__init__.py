@@ -19,7 +19,7 @@ from . import (
 ################################################################################################
 
 gym.register(
-    id="Isaac-Velocity-Rough-Flamingo-v1-ppo",
+    id="Isaac-Velocity-Rough-FlamingoPF-v1-ppo",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -29,7 +29,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Velocity-Rough-BC-Flamingo-v1-ppo",
+    id="Isaac-Velocity-Rough-BC-FlamingoPF-v1-ppo",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -39,7 +39,7 @@ gym.register(
 )
 
 gym.register(
-    id="Isaac-Velocity-Rough-Flamingo-Play-v1-ppo",
+    id="Isaac-Velocity-Rough-FlamingoPF-Play-v1-ppo",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={

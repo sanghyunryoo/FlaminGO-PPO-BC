@@ -8,7 +8,8 @@ from isaaclab.actuators.actuator_net import (
     ActuatorNetLSTM as BaseActuatorNetLSTM,
     ActuatorNetMLP as BaseActuatorNetMLP,
 )
-from isaaclab.actuators.actuator_pd import DCMotor
+
+from isaaclab.actuators.actuator_pd import DCMotor, DelayedPDActuator
 
 
 class ActuatorNetLSTM(BaseActuatorNetLSTM):
@@ -306,3 +307,117 @@ class ActuatorNetKAN(DCMotor):
         print(f"lambda x: {formula_str}")
 
         return formula_func, required_input_dim
+    
+class GearTransmissionPDActuator(DelayedPDActuator):
+    """기어비를 명령/한계/관성에 일관 반영하는 DelayedPD 파생 액추에이터."""
+
+    def __init__(self, cfg, *args, **kwargs):
+        from .actuator_cfg import GearTransmissionPDCfg
+        cfg: GearTransmissionPDCfg
+        super().__init__(cfg, *args, **kwargs)
+
+        # ----- 기어비 -----
+        self._gamma = float(getattr(cfg, "gear_ratio", 1.0))
+
+        # ----- 모터측 한계 추정 (입력 우선) -----
+        # effort_limit / velocity_limit는 부모에서 tensor 또는 float로 들어올 수 있음 → 텐서화
+        eff_lim_tensor = torch.as_tensor(self.effort_limit, device=self._device)
+        vel_lim_tensor = torch.as_tensor(self.velocity_limit, device=self._device)
+
+        if getattr(cfg, "motor_effort_limit", None) is not None:
+            self._tau_m_max = float(cfg.motor_effort_limit)
+        else:
+            # 현재 effort_limit가 "조인트측"으로 세팅되었다고 가정 → 모터측으로 환원
+            self._tau_m_max = (eff_lim_tensor / self._gamma).item() if torch.isfinite(eff_lim_tensor).all() else float("inf")
+
+        if getattr(cfg, "motor_velocity_limit", None) is not None:
+            self._omega_m_max = float(cfg.motor_velocity_limit)
+        else:
+            # 현재 velocity_limit가 "조인트측"으로 세팅되었다고 가정 → 모터측으로 환원
+            self._omega_m_max = (vel_lim_tensor * self._gamma).item() if torch.isfinite(vel_lim_tensor).all() else float("inf")
+
+        # ----- 조인트측 한계 재설정 (부모의 클리핑/검증은 조인트측 기준으로 동작) -----
+        self.effort_limit = torch.as_tensor(self._tau_m_max * self._gamma, device=self._device)
+        self.velocity_limit = torch.as_tensor(self._omega_m_max / self._gamma, device=self._device)
+
+        # ----- 반사 관성 근사: armature *= γ^2 -----
+        if bool(getattr(cfg, "scale_armature", True)):
+            self.armature = torch.as_tensor(self.armature, device=self._device) #* (self._gamma ** 2)
+
+        # ----- rate-limit 옵션 -----
+        self._rate_limit = bool(getattr(cfg, "rate_limit", True))
+        self._q_des_prev = None  # env reset마다 초기화
+
+    # ------------------------------------------------
+    # Utilities
+    # ------------------------------------------------
+    def _apply_gear_and_rate_limit(
+        self,
+        q_des_m: torch.Tensor | None,
+        dq_des_m: torch.Tensor | None,
+        dt: float,
+    ):
+        """모터측 명령 → (1/γ) → 조인트측 명령, 그리고 조인트측 속도 한계로 rate-limit."""
+        if q_des_m is None:
+            # (포지션 명령이 없으면 패스)
+            return None, dq_des_m
+
+        # 디바이스/형 안정화
+        q_des_m = torch.as_tensor(q_des_m, device=self._device)
+        dq_des_m = None if dq_des_m is None else torch.as_tensor(dq_des_m, device=self._device)
+
+        # 모터 → 조인트 변환
+        q_des_j = q_des_m * self._gamma
+        dq_des_j = (dq_des_m * self._gamma) if dq_des_m is not None else torch.zeros_like(q_des_j, device=self._device)
+
+        # rate-limit (조인트측 최대속도 = ω_m,max / γ)
+        if self._rate_limit:
+            vlim = torch.as_tensor(self.velocity_limit, device=self._device)  # 조인트측
+            if torch.isfinite(vlim).all():
+                dq_step_max = vlim * dt  # 브로드캐스팅 허용
+                if self._q_des_prev is None:
+                    self._q_des_prev = q_des_j.clone()
+                dq_step = torch.clamp(q_des_j - self._q_des_prev, min=-dq_step_max, max=dq_step_max)
+                q_des_j = self._q_des_prev + dq_step
+                self._q_des_prev = q_des_j.clone()
+
+        return q_des_j, dq_des_j
+
+    # ------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------
+    def reset(self, env_ids):
+        """부모 초기화 + 내부 상태 초기화."""
+        super().reset(env_ids)
+        # 부분 리셋 시에도 안전하게 초기화
+        self._q_des_prev = None
+
+    # ------------------------------------------------
+    # Main step
+    # ------------------------------------------------
+    def compute(
+        self,
+        control_action: ArticulationActions,
+        joint_pos: torch.Tensor,
+        joint_vel: torch.Tensor,
+    ) -> ArticulationActions:
+        """상위 명령(모터측으로 해석)을 조인트측으로 변환 → DelayedPDActuator.compute."""
+        # 물리 dt (부모에서 보통 보관), 없으면 보수값
+        dt = float(getattr(self, "_physics_dt", 1.0 / 60.0))
+
+        # 상위 명령 가져오기
+        q_des_m = control_action.joint_positions
+        dq_des_m = control_action.joint_velocities
+
+        # 기어 전송 + rate-limit
+        q_des_j, dq_des_j = self._apply_gear_and_rate_limit(q_des_m, dq_des_m, dt)
+
+        # 변환된 명령을 control_action에 반영 (None일 경우 기존값 유지)
+        if q_des_j is not None:
+            control_action.joint_positions = q_des_j
+            control_action.joint_velocities = dq_des_j
+
+        # 부모 로직(지연→PD→클리핑)
+        control_action = super().compute(control_action, joint_pos, joint_vel)
+        control_action.joint_efforts = control_action.joint_efforts * self._gamma 
+        return control_action

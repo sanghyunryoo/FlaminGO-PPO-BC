@@ -9,8 +9,8 @@ from isaaclab.utils import configclass
 
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 import lab.flamingo.tasks.manager_based.locomotion.velocity.mdp as mdp
-import lab.flamingo.tasks.manager_based.locomotion.velocity.flamingo_env.rough_env.stand_drive.drive_rewards as mdp_drive
-from lab.flamingo.tasks.manager_based.locomotion.velocity.flamingo_env.velocity_env_cfg import (
+import lab.flamingo.tasks.manager_based.locomotion.velocity.flamingo_pf_env.rough_env.stand_drive.drive_rewards as mdp_drive
+from lab.flamingo.tasks.manager_based.locomotion.velocity.flamingo_pf_env.velocity_env_cfg import (
     LocomotionVelocityRoughEnvCfg,
     CurriculumCfg,
 )
@@ -116,7 +116,6 @@ class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         #! ****************** Observations setup ****************** !#
         self.observations.none_stack_policy.base_pos_z.params["sensor_cfg"] = None
-        self.observations.teacher_none_stack_policy.base_pos_z.params["sensor_cfg"] = None
         self.observations.none_stack_critic.base_pos_z.params["sensor_cfg"] = None
 
         # self.observations.none_stack_policy.height_scan = None # BC-Train -> activate / PPO-Train -> deactivate
@@ -126,17 +125,8 @@ class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.observations.none_stack_policy.is_contact = None
         self.observations.none_stack_policy.lift_mask = None
 
-        self.observations.teacher_none_stack_policy.base_lin_vel = None
-        self.observations.teacher_none_stack_policy.base_pos_z = None
-        self.observations.teacher_none_stack_policy.current_reward = None
-        self.observations.teacher_none_stack_policy.is_contact = None
-        self.observations.teacher_none_stack_policy.lift_mask = None
-
         self.observations.none_stack_policy.roll_pitch_commands = None
         self.observations.none_stack_policy.event_commands = None
-
-        self.observations.teacher_none_stack_policy.roll_pitch_commands = None
-        self.observations.teacher_none_stack_policy.event_commands = None
 
         self.observations.none_stack_critic.roll_pitch_commands = None
         self.observations.none_stack_critic.event_commands = None

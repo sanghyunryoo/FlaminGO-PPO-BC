@@ -328,6 +328,108 @@ def export_policy_as_onnx(
     policy_exporter = _OnnxPolicyExporter(actor_critic, normalizer, verbose)
     policy_exporter.export(path, filename)
 
+def export_encoder_as_onnx(encoder, path, name):
+    os.makedirs(path, exist_ok=True)
+    path = os.path.join(path, name + ".onnx")
+    model = copy.deepcopy(encoder).to("cpu")
+    model.eval()
+
+    dummy_input = torch.randn(self.actor[0].in_features)
+    input_names = ["encoder_input"]
+    output_names = ["encoder_output"]
+
+    torch.onnx.export(
+        model,
+        dummy_input,
+        path,
+        verbose=True,
+        input_names=input_names,
+        output_names=output_names,
+        export_params=True,
+        opset_version=13,
+    )
+    print("Exported encoder as onnx script to: ", path)
+
+def export_encoder_as_onnx(
+    encoder: nn.Module,
+    path: str,
+    filename: str = "encoder.onnx",
+    dummy_input: torch.Tensor | None = None,
+    verbose: bool = False,
+) -> None:
+    """Export a standalone encoder module to ONNX.
+
+    Args:
+        encoder: Observation encoder nn.Module (e.g., MLP, CNN, etc.).
+        path: Directory to save the ONNX file.
+        filename: ONNX file name. Defaults to "encoder.onnx".
+        device: "cpu" or "cuda". Export runs on CPU; model is copied and moved.
+        dummy_input: Optional example input tensor. If None, the function
+            attempts to infer a reasonable dummy input from the encoder.
+        verbose: Whether to print ONNX export logs.
+    """
+    os.makedirs(path, exist_ok=True)
+
+    # Work on a CPU copy to avoid mutating the original module / device state
+    enc = copy.deepcopy(encoder).to("cpu").eval()
+
+    # Helper: try to infer an input tensor if not provided
+    def _infer_dummy_input(m: nn.Module) -> torch.Tensor:
+        # 1) If module declares an attribute for input dimension
+        if hasattr(m, "input_dim") and isinstance(m.input_dim, int):
+            return torch.zeros(1, int(m.input_dim), dtype=torch.float32)
+
+        # 2) If it's a Sequential starting with Linear
+        if isinstance(m, nn.Sequential) and len(m) > 0:
+            first = next((layer for layer in m if isinstance(layer, (nn.Linear, nn.Conv2d))), None)
+            if isinstance(first, nn.Linear):
+                return torch.zeros(1, first.in_features, dtype=torch.float32)
+            if isinstance(first, nn.Conv2d):
+                # Heuristic spatial size; many encoders accept flexible HxW.
+                # Use a conventional 84x84; channels from in_channels.
+                return torch.zeros(1, first.in_channels, 84, 84, dtype=torch.float32)
+
+        # 3) Search any Linear/Conv layer in arbitrary module
+        first_linear = next((mod for mod in m.modules() if isinstance(mod, nn.Linear)), None)
+        if first_linear is not None:
+            return torch.zeros(1, first_linear.in_features, dtype=torch.float32)
+
+        first_conv = next((mod for mod in m.modules() if isinstance(mod, nn.Conv2d)), None)
+        if first_conv is not None:
+            return torch.zeros(1, first_conv.in_channels, 84, 84, dtype=torch.float32)
+
+        # 4) Fallback: assume a vector input of size 128
+        return torch.zeros(1, 128, dtype=torch.float32)
+
+    # Prepare the dummy input
+    if dummy_input is None:
+        dummy_input = _infer_dummy_input(enc)
+
+    # Sanity: ensure float32 on CPU
+    dummy_input = dummy_input.to(dtype=torch.float32, device="cpu")
+
+    # Build dynamic axes (make batch dim dynamic; for images keep H/W fixed by default)
+    dynamic_axes = {"obs": {0: "batch_size"}}
+
+    # Export
+    onnx_path = os.path.join(path, filename)
+    with torch.no_grad():
+        # Warm-up forward to catch shape issues early
+        _ = enc(dummy_input)
+
+        torch.onnx.export(
+            enc,
+            dummy_input,
+            onnx_path,
+            export_params=True,
+            opset_version=11,
+            verbose=verbose,
+            input_names=["obs"],
+            output_names=["encoded_features"],
+            dynamic_axes=dynamic_axes,
+        )
+
+    print(f"Encoder ONNX model has been saved to {onnx_path}")
 
 def export_srm_as_onnx(srm, srm_fc, device, path, filename="srm.onnx", verbose=False):
     """Export SRM (GRU/LSTM + Fully Connected layer) from actor_critic to ONNX.
