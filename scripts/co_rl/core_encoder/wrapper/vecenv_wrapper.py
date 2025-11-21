@@ -52,7 +52,7 @@ class CoRlVecEnvWrapper(VecEnv):
         # Determine the number of policy and critic stacks
         self.num_policy_stacks = agent_cfg.num_policy_stacks
         self.num_critic_stacks = agent_cfg.num_critic_stacks
-
+        self.num_teacher_stacks = agent_cfg.num_teacher_stacks
         # Determine if constraint RL is used
         self.use_constraint_rl = agent_cfg.use_constraint_rl
         
@@ -66,7 +66,7 @@ class CoRlVecEnvWrapper(VecEnv):
                 raise KeyError('"stack_critic" key is missing in observation_manager.group_obs_dim')
             if "none_stack_critic" not in group_obs_dim:
                 raise KeyError('"none_stack_critic" key is missing in observation_manager.group_obs_dim')
-    
+
         # Determine action and observation dimensions
         if hasattr(self.unwrapped, "action_manager"):
             self.num_actions = self.unwrapped.action_manager.total_action_dim
@@ -96,6 +96,16 @@ class CoRlVecEnvWrapper(VecEnv):
         else:
             self.num_privileged_obs = 0
 
+        # -- Teacher observations
+        if hasattr(self.unwrapped, "observation_manager") and "teacher_stack_policy" in group_obs_dim and "teacher_none_stack_policy" in group_obs_dim:
+            stack_teacher_dim = self.unwrapped.observation_manager.group_obs_dim["teacher_stack_policy"][0]
+            nonstack_teacher_dim = self.unwrapped.observation_manager.group_obs_dim["teacher_none_stack_policy"][0]
+            self.teacher_state_handler = StateHandler(self.num_teacher_stacks + 1, stack_teacher_dim, nonstack_teacher_dim)
+            self.unwrapped.observation_manager.group_obs_dim["teacher"] = (self.teacher_state_handler.num_obs,)
+            self.num_teacher_obs = self.teacher_state_handler.num_obs
+        else:
+            self.num_teacher_obs = 0    
+            
         # reset at the start since the RSL-RL runner does not call reset
         self.env.reset()
 
@@ -177,6 +187,13 @@ class CoRlVecEnvWrapper(VecEnv):
                 critic_obs = self.critic_state_handler.update(obs_dict["stack_critic"], obs_dict["none_stack_critic"])
             obs_dict["critic"] = critic_obs
 
+        if hasattr(self, "teacher_state_handler") and self.teacher_state_handler is not None:
+            if self.teacher_state_handler.stack_buffer is None:
+                teacher_obs = self.teacher_state_handler.reset(obs_dict["teacher_stack_policy"], obs_dict["teacher_none_stack_policy"])
+            else:
+                teacher_obs = self.teacher_state_handler.update(obs_dict["teacher_stack_policy"], obs_dict["teacher_none_stack_policy"])
+            obs_dict["teacher"] = teacher_obs
+
         return policy_obs, {"observations": obs_dict}
 
     @property
@@ -217,6 +234,10 @@ class CoRlVecEnvWrapper(VecEnv):
             critic_obs = self.critic_state_handler.reset(obs_dict["stack_critic"], obs_dict["none_stack_critic"])
             obs_dict["critic"] = critic_obs
 
+        if hasattr(self, "teacher_state_handler") and self.teacher_state_handler is not None:
+            teacher_obs = self.teacher_state_handler.reset(obs_dict["teacher_stack_policy"], obs_dict["teacher_non_stack_policy"])
+            obs_dict["teacher"] = teacher_obs
+
         return obs_dict["policy"], {"observations": obs_dict}
 
     def step(self, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
@@ -239,6 +260,12 @@ class CoRlVecEnvWrapper(VecEnv):
                 obs_dict["stack_critic"], obs_dict["none_stack_critic"]
             )
             obs_dict["critic"] = critic_obs
+
+        if hasattr(self, "teacher_state_handler"):
+            teacher_obs = self.teacher_state_handler.update(
+                obs_dict["teacher_stack_policy"], obs_dict["teacher_none_stack_policy"]
+            )
+            obs_dict["teacher"] = teacher_obs   
 
         policy_obs = obs_dict["policy"]
         extras["observations"] = obs_dict

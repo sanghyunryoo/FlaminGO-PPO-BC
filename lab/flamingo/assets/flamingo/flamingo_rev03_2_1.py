@@ -31,7 +31,7 @@ FLAMINGO_WHEEL_ACTUATOR_KAN_CFG = ActuatorNetKANCfg(
 
 FLAMINGO_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{FLAMINGO_ASSETS_DATA_DIR}/Robots/Flamingo/flamingo_rev01_5_2/flamingo_rev01_5_2_merge_joints.usd",
+        usd_path=f"{FLAMINGO_ASSETS_DATA_DIR}/Robots/Flamingo/flamingo_rev03_2_1/flamingo_rev03_2_1.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -46,9 +46,9 @@ FLAMINGO_CFG = ArticulationCfg(
             enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=0
         ),
     ),
-
+    
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.4535),  # default: 0.4535
+        pos=(0.0, 0.0, 0.615),  # default: 0.4535
         joint_pos={
             "left_hip_joint": 0.0,
             "left_shoulder_joint": 0.0,
@@ -70,14 +70,14 @@ FLAMINGO_CFG = ArticulationCfg(
             min_delay=0,  # physics time steps (min: 5.0 * 0 = 0.0ms)
             max_delay=4,  # physics time steps (max: 5.0 * 4 = 20.0ms)
             stiffness={
-                ".*_hip_joint": 100.0,
-                ".*_shoulder_joint": 100.0,
+                ".*_hip_joint": 120.0,
+                ".*_shoulder_joint": 120.0,
             },
             damping={
                 ".*_hip_joint": 1.5,
                 ".*_shoulder_joint": 1.5,
             },
-        friction={
+            friction={
                 ".*_hip_joint": 0.0,
                 ".*_shoulder_joint": 0.0,
             },
@@ -89,7 +89,7 @@ FLAMINGO_CFG = ArticulationCfg(
         "joints_l": GearDelayedPDActuatorCfg(
             joint_names_expr=[".*_leg_joint"],
             effort_limit=60.0,
-            velocity_limit=20.0,
+            velocity_limit=13.32,
             gear_ratio=-1.5,
             gamma=1.0,
             min_delay=0,  # physics time steps (min: 5.0 * 0 = 0.0ms)

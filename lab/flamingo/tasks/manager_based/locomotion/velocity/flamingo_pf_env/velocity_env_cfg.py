@@ -196,6 +196,7 @@ class ObservationsCfg:
                 "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint"]),
                 "gear_ratio": -1.5,
             },
+            noise=Unoise(n_min=-0.05, n_max=0.05),
         )
         joint_vel = ObsTerm(
             func=mdp.joint_vel_leg_gear, 
@@ -203,6 +204,7 @@ class ObservationsCfg:
                 "asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_joint", ".*_shoulder_joint", ".*_leg_joint"]),
                 "gear_ratio": -1.5,
             },            
+            noise=Unoise(n_min=-1.5, n_max=1.5),
             scale=0.15)  # default: -1.5     
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel_link, scale=0.25)  # default: -0.15
         base_projected_gravity = ObsTerm(func=mdp.projected_gravity)  # default: -0.05

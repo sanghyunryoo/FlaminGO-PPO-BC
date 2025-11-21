@@ -7,14 +7,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from scripts.co_rl.core.modules import ActorCritic
+from scripts.co_rl.core.modules import ActorCritic, MLP_Encoder
 from scripts.co_rl.core.storage import RolloutStorage
 
 class PPO:
     actor_critic: ActorCritic
-
+    encoder: MLP_Encoder
+    
     def __init__(
         self,
+        encoder,
         actor_critic,
         num_learning_epochs=1,
         num_mini_batches=1,
@@ -24,6 +26,7 @@ class PPO:
         value_loss_coef=1.0,
         entropy_coef=0.0,
         learning_rate=1e-3,
+        est_learning_rate=1.0e-3,
         max_grad_norm=1.0,
         use_clipped_value_loss=True,
         schedule="fixed",
@@ -42,6 +45,16 @@ class PPO:
         self.storage = None  # initialized later
         self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
         self.transition = RolloutStorage.Transition()
+
+        self.encoder = encoder
+
+        if self.encoder.num_output_dim != 0:
+            self.extra_optimizer = optim.Adam(
+                self.encoder.parameters(), lr=est_learning_rate
+            )
+        else:
+            self.extra_optimizer = None
+
 
         # PPO parameters
         self.clip_param = clip_param
@@ -75,7 +88,9 @@ class PPO:
         if self.actor_critic.is_recurrent:
             self.transition.hidden_states = self.actor_critic.get_hidden_states()
         # Compute the actions and values
-        self.transition.actions = self.actor_critic.act(obs).detach()
+
+        encoder_out = self.encoder.encode(obs)
+        self.transition.actions = self.actor_critic.act(torch.cat((encoder_out, obs), dim=-1)).detach()
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()
@@ -123,7 +138,13 @@ class PPO:
             hid_states_batch,
             masks_batch,
         ) in generator:
-            self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
+            encoder_out_batch = self.encoder.encode(obs_batch)
+            self.actor_critic.act(
+                torch.cat(
+                    (encoder_out_batch, obs_batch),
+                    dim=-1,
+                )
+            )
             actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
             value_batch = self.actor_critic.evaluate(
                 critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1]
@@ -131,7 +152,7 @@ class PPO:
             mu_batch = self.actor_critic.action_mean
             sigma_batch = self.actor_critic.action_std
             entropy_batch = self.actor_critic.entropy
-
+            
             # KL
             if self.desired_kl is not None and self.schedule == "adaptive":
                 with torch.inference_mode():
@@ -182,9 +203,44 @@ class PPO:
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
 
+
+
+
+
+        num_updates_extra = 0
+        mean_extra_loss = 0
+        if self.extra_optimizer is not None:
+            generator = self.storage.encoder_mini_batch_generator(
+                self.num_mini_batches, self.num_learning_epochs
+            )
+            for (
+                obs_batch,
+                critic_obs_batch,
+            ) in generator:
+                if self.encoder.is_mlp_encoder:
+                    self.encoder.encode(obs_batch)
+                    encode_batch = self.encoder.get_encoder_out()
+
+                if self.encoder.is_mlp_encoder:
+                    extra_loss = (
+                        (encode_batch[:, 0:3] - critic_obs_batch[:, 0:3]).pow(2).mean()
+                    )
+                else:
+                    extra_loss = torch.zeros_like(value_loss)
+
+                self.extra_optimizer.zero_grad()
+                extra_loss.backward()
+                self.extra_optimizer.step()
+
+                num_updates_extra += 1
+                mean_extra_loss += extra_loss.item()
+
         num_updates = self.num_learning_epochs * self.num_mini_batches
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
+        mean_value_loss /= num_updates
+        if num_updates_extra > 0:
+            mean_extra_loss /= num_updates
         self.storage.clear()
 
-        return mean_value_loss, mean_surrogate_loss
+        return mean_value_loss, mean_extra_loss, mean_surrogate_loss

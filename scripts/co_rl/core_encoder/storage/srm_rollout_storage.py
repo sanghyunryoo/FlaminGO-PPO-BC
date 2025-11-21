@@ -9,13 +9,15 @@ import torch
 from scripts.co_rl.core.utils import split_and_pad_trajectories
 
 
-class RolloutStorage:
+class SRMRolloutStorage:
     class Transition:
         def __init__(self):
             self.observations = None
             self.critic_observations = None
             self.actions = None
+            self.prev_actions = None
             self.rewards = None
+            self.prev_rewards = None
             self.dones = None
             self.values = None
             self.actions_log_prob = None
@@ -43,7 +45,10 @@ class RolloutStorage:
         else:
             self.privileged_observations = None
         self.rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+        self.prev_rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
         self.actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
+        self.prev_actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
+
         if "use_constraint_rl" in self.cfg:
             if not self.cfg["use_constraint_rl"]:
                 self.dones = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device).byte()
@@ -76,7 +81,9 @@ class RolloutStorage:
         if self.privileged_observations is not None:
             self.privileged_observations[self.step].copy_(transition.critic_observations)
         self.actions[self.step].copy_(transition.actions)
+        self.prev_actions[self.step].copy_(transition.prev_actions)  # Store previous actions
         self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
+        self.prev_rewards[self.step].copy_(transition.prev_rewards.view(-1, 1))  # Store previous rewards
         self.dones[self.step].copy_(transition.dones.view(-1, 1))
         self.values[self.step].copy_(transition.values)
         self.actions_log_prob[self.step].copy_(transition.actions_log_prob.view(-1, 1))
@@ -114,7 +121,7 @@ class RolloutStorage:
             if step == self.num_transitions_per_env - 1:
                 next_values = last_values
             else:
-                next_values = self.values[step + 1] 
+                next_values = self.values[step + 1]
             next_is_not_terminal = 1.0 - self.dones[step].float()
             delta = self.rewards[step] + next_is_not_terminal * gamma * next_values - self.values[step]
             advantage = delta + next_is_not_terminal * gamma * lam * advantage
@@ -137,7 +144,7 @@ class RolloutStorage:
     def mini_batch_generator(self, num_mini_batches, num_epochs=8):
         batch_size = self.num_envs * self.num_transitions_per_env
         mini_batch_size = batch_size // num_mini_batches
-        indices = torch.randperm(num_mini_batches * mini_batch_size, requires_grad=False, device=self.device)
+        indices = torch.randperm(batch_size, device=self.device)
 
         observations = self.observations.flatten(0, 1)
         if self.privileged_observations is not None:
@@ -146,6 +153,9 @@ class RolloutStorage:
             critic_observations = observations
 
         actions = self.actions.flatten(0, 1)
+        prev_actions = self.prev_actions.flatten(0, 1)  # Flatten previous actions
+        rewards = self.rewards.flatten(0, 1)
+        prev_rewards = self.prev_rewards.flatten(0, 1)  # Flatten previous rewards
         values = self.values.flatten(0, 1)
         returns = self.returns.flatten(0, 1)
         old_actions_log_prob = self.actions_log_prob.flatten(0, 1)
@@ -160,22 +170,39 @@ class RolloutStorage:
                 batch_idx = indices[start:end]
 
                 obs_batch = observations[batch_idx]
-                critic_observations_batch = critic_observations[batch_idx]
+                critic_obs_batch = critic_observations[batch_idx]
                 actions_batch = actions[batch_idx]
+                prev_actions_batch = prev_actions[batch_idx]  # Extract previous actions batch
+                rewards_batch = rewards[batch_idx]
+                prev_rewards_batch = prev_rewards[batch_idx]  # Extract previous rewards batch
                 target_values_batch = values[batch_idx]
                 returns_batch = returns[batch_idx]
                 old_actions_log_prob_batch = old_actions_log_prob[batch_idx]
                 advantages_batch = advantages[batch_idx]
                 old_mu_batch = old_mu[batch_idx]
                 old_sigma_batch = old_sigma[batch_idx]
-                yield obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (
-                    None,
-                    None,
-                ), None
 
-    # for RNNs only
+                yield (
+                    obs_batch,
+                    critic_obs_batch,
+                    actions_batch,
+                    prev_actions_batch,  # Include actions difference
+                    rewards_batch,
+                    prev_rewards_batch,  # Include previous rewards batch
+                    target_values_batch,
+                    advantages_batch,
+                    returns_batch,
+                    old_actions_log_prob_batch,
+                    old_mu_batch,
+                    old_sigma_batch,
+                    (None, None),  # hid_states_batch
+                    None,
+                )
+
     def reccurent_mini_batch_generator(self, num_mini_batches, num_epochs=8):
         padded_obs_trajectories, trajectory_masks = split_and_pad_trajectories(self.observations, self.dones)
+        padded_prev_rewards_trajectories, _ = split_and_pad_trajectories(self.prev_rewards, self.dones)
+
         if self.privileged_observations is not None:
             padded_critic_obs_trajectories, _ = split_and_pad_trajectories(self.privileged_observations, self.dones)
         else:
@@ -200,6 +227,11 @@ class RolloutStorage:
                 critic_obs_batch = padded_critic_obs_trajectories[:, first_traj:last_traj]
 
                 actions_batch = self.actions[:, start:stop]
+                prev_actions_batch = self.prev_actions[:, start:stop]  # Include actions difference
+                rewards_batch = self.rewards[:, start:stop]
+                prev_rewards_batch = padded_prev_rewards_trajectories[
+                    :, first_traj:last_traj
+                ]  # Include previous rewards batch
                 old_mu_batch = self.mu[:, start:stop]
                 old_sigma_batch = self.sigma[:, start:stop]
                 returns_batch = self.returns[:, start:stop]
@@ -207,9 +239,7 @@ class RolloutStorage:
                 values_batch = self.values[:, start:stop]
                 old_actions_log_prob_batch = self.actions_log_prob[:, start:stop]
 
-                # reshape to [num_envs, time, num layers, hidden dim] (original shape: [time, num_layers, num_envs, hidden_dim])
-                # then take only time steps after dones (flattens num envs and time dimensions),
-                # take a batch of trajectories and finally reshape back to [num_layers, batch, hidden_dim]
+                # reshape to [num_envs, time, num layers, hidden dim]
                 last_was_done = last_was_done.permute(1, 0)
                 hid_a_batch = [
                     saved_hidden_states.permute(2, 0, 1, 3)[last_was_done][first_traj:last_traj]
@@ -227,9 +257,21 @@ class RolloutStorage:
                 hid_a_batch = hid_a_batch[0] if len(hid_a_batch) == 1 else hid_a_batch
                 hid_c_batch = hid_c_batch[0] if len(hid_c_batch) == 1 else hid_c_batch
 
-                yield obs_batch, critic_obs_batch, actions_batch, values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (
-                    hid_a_batch,
-                    hid_c_batch,
-                ), masks_batch
+                yield (
+                    obs_batch,
+                    critic_obs_batch,
+                    actions_batch,
+                    prev_actions_batch,  # Include actions difference
+                    rewards_batch,
+                    prev_rewards_batch,  # Include previous rewards batch
+                    values_batch,
+                    advantages_batch,
+                    returns_batch,
+                    old_actions_log_prob_batch,
+                    old_mu_batch,
+                    old_sigma_batch,
+                    (hid_a_batch, hid_c_batch),
+                    masks_batch,
+                )
 
                 first_traj = last_traj

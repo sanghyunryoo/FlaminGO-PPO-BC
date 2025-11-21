@@ -233,3 +233,26 @@ class RolloutStorage:
                 ), masks_batch
 
                 first_traj = last_traj
+                
+    def encoder_mini_batch_generator(self, num_mini_batches, num_epochs=8):
+        batch_size = self.num_envs * self.num_transitions_per_env
+        mini_batch_size = batch_size // num_mini_batches
+        indices = torch.randperm(
+            num_mini_batches * mini_batch_size, requires_grad=False, device=self.device
+        )
+
+        if self.privileged_observations is not None:
+            critic_obs = self.privileged_observations.flatten(0, 1)
+        else: 
+            critic_obs = self.observations
+        observations = self.observations.flatten(0, 1)
+
+        for epoch in range(num_epochs):
+            for i in range(num_mini_batches):
+                start = i * mini_batch_size
+                end = (i + 1) * mini_batch_size
+                batch_idx = indices[start:end]
+
+                obs_batch = observations[batch_idx]
+                critic_obs_batch = critic_obs[batch_idx]
+                yield obs_batch, critic_obs_batch

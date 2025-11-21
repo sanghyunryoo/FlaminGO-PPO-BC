@@ -10,6 +10,16 @@ from isaaclab.utils import configclass
 
 
 @configclass
+class EncoderCfg:
+    output_detach : bool = True
+    num_input_dim : int = MISSING
+    num_output_dim : int = 3
+    hidden_dims : list[int] = [256, 128]
+    activation : str = "elu"
+    orthogonal_init : bool = False
+
+
+@configclass
 class CoRlOffPolicyCfg:
     """Configuration for the Off-Policy networks."""
 
@@ -46,7 +56,6 @@ class CoRlPpoActorCriticCfg:
     activation: str = MISSING
     """The activation function for the actor and critic networks."""
 
-
 @configclass
 class CoRlPpoAlgorithmCfg:
     """Configuration for the PPO algorithm."""
@@ -75,6 +84,9 @@ class CoRlPpoAlgorithmCfg:
     learning_rate: float = MISSING
     """The learning rate for the policy."""
 
+    learning_rate: float = MISSING
+    """The learning rate for the policy."""
+
     schedule: str = MISSING
     """The learning rate schedule."""
 
@@ -90,6 +102,13 @@ class CoRlPpoAlgorithmCfg:
     max_grad_norm: float = MISSING
     """The maximum gradient norm."""
 
+    bc_ckpt: str = None
+    bc_coef: float = MISSING
+    rl_coef: float = MISSING
+    low_rl_coef_ratio: float = MISSING
+    high_bc_coef_ratio: float = MISSING
+    annealing_factor: float = MISSING
+    train_joint_idx: list[int] = MISSING
 
 @configclass
 class CoRlSrmPpoAlgorithmCfg:
@@ -167,7 +186,6 @@ class CoRlSrmPpoAlgorithmCfg:
     acaps_lambda_s_coef: float = MISSING
     """The coefficient for the ACAPS spatial loss."""
 
-
 @configclass
 class CoRlPolicyRunnerCfg:
     """Configuration of the runner for on-policy algorithms."""
@@ -193,6 +211,8 @@ class CoRlPolicyRunnerCfg:
     algorithm: CoRlPpoAlgorithmCfg = MISSING
     """The algorithm configuration."""
 
+    encoder: EncoderCfg = MISSING
+    """The encoder configuration."""
     ##
     # Checkpointing parameters
     ##
@@ -252,6 +272,9 @@ class CoRlPolicyRunnerCfg:
     num_critic_stacks: int = 0
     """The number of frames to stack. Default is 0."""
 
+    num_teacher_stacks: int = 0
+    """The number of frames to stack. Default is 0."""
+    
     use_constraint_rl: bool = False
     """Whether to use constraints as termination."""
 ########################################################################################################################

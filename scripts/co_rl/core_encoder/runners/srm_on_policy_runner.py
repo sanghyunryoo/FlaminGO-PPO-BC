@@ -11,25 +11,27 @@ from collections import deque
 from torch.utils.tensorboard import SummaryWriter as TensorboardSummaryWriter
 
 from scripts import co_rl
-from scripts.co_rl.core.algorithms import PPO
+from scripts.co_rl.core.algorithms import SRMPPO
 from scripts.co_rl.core.env import VecEnv
 from scripts.co_rl.core.modules import ActorCritic, ActorCriticRecurrent, EmpiricalNormalization
 from scripts.co_rl.core.utils import store_code_state
 
 
-class OnPolicyRunner:
+class SRMOnPolicyRunner:
     """On-policy runner for training and evaluation."""
 
     def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
         self.cfg = train_cfg
         self.alg_cfg = train_cfg["algorithm"]
         self.policy_cfg = train_cfg["policy"]
+        # self.num_stack = train_cfg["num_stack"]
 
-        assert self.alg_cfg["class_name"] == "PPO"
+        assert self.alg_cfg["class_name"] == "SRMPPO"
 
         self.device = device
         self.env = env
         obs, extras = self.env.get_observations()
+        self.restored_obs = torch.zeros_like(obs)
         num_obs = obs.shape[1]
         if "critic" in extras["observations"]:
             num_critic_obs = extras["observations"]["critic"].shape[1]
@@ -39,11 +41,16 @@ class OnPolicyRunner:
         actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(
             num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
-        alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
+        # Save the class_name before popping it
+        self.class_name = self.alg_cfg["class_name"]
+
+        # Initialize the algorithm
+        alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO or SRMPPO
+        self.alg: SRMPPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
+
         if self.empirical_normalization:
             self.obs_normalizer = EmpiricalNormalization(shape=[num_obs], until=1.0e8).to(self.device)
             self.critic_obs_normalizer = EmpiricalNormalization(shape=[num_critic_obs], until=1.0e8).to(self.device)
@@ -67,7 +74,6 @@ class OnPolicyRunner:
         self.tot_time = 0
         self.current_learning_iteration = 0
         self.git_status_repos = [co_rl.__file__]
-
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
         # initialize writer
@@ -96,6 +102,8 @@ class OnPolicyRunner:
                 self.env.episode_length_buf, high=int(self.env.max_episode_length)
             )
         obs, extras = self.env.get_observations()
+        prev_actions = torch.zeros(self.env.num_envs, self.env.num_actions, device=self.device)
+        prev_rewards = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         critic_obs = extras["observations"].get("critic", obs)
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
         self.train_mode()  # switch to train mode (for dropout for example)
@@ -113,8 +121,12 @@ class OnPolicyRunner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(obs, critic_obs)
-                    obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
+                    restored_obs = self.alg.encode_obs(obs)
+                    # Store the current rewards for r_t-1 and a_t-2
+                    self.alg.store_prev_info(prev_rewards, prev_actions)
+                    actions = self.alg.act(restored_obs, critic_obs)
+                    # Step the environment
+                    obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))  # VecEnvWrapper 호출
                     # move to the right device
                     obs, critic_obs, rewards, dones = (
                         obs.to(self.device),
@@ -128,7 +140,12 @@ class OnPolicyRunner:
                         critic_obs = self.critic_obs_normalizer(infos["observations"]["critic"])
                     else:
                         critic_obs = obs
-                    # process the step
+
+                    # Update the previous actions
+                    prev_actions = actions.to(self.env.device)
+                    prev_rewards = rewards
+
+                    # process the step - #! [See here] It clears transition buffer!
                     self.alg.process_env_step(rewards, dones, infos)
 
                     if self.log_dir is not None:
@@ -141,10 +158,7 @@ class OnPolicyRunner:
                             ep_infos.append(infos["log"])
                         cur_reward_sum += rewards
                         cur_episode_length += 1
-                        if not self.cfg["use_constraint_rl"]:
-                            new_ids = (dones > 0).nonzero(as_tuple=False)
-                        else:
-                            new_ids = (dones == 1.0).nonzero(as_tuple=False)
+                        new_ids = (dones > 0).nonzero(as_tuple=False)
                         rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
                         lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
                         cur_reward_sum[new_ids] = 0
@@ -157,7 +171,7 @@ class OnPolicyRunner:
                 start = stop
                 self.alg.compute_returns(critic_obs)
 
-            mean_value_loss, mean_surrogate_loss = self.alg.update()
+            mean_value_loss, mean_surrogate_loss, mean_srm_loss, mean_r_loss, mean_rc_loss = self.alg.update()
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
@@ -207,6 +221,9 @@ class OnPolicyRunner:
 
         self.writer.add_scalar("Loss/value_function", locs["mean_value_loss"], locs["it"])
         self.writer.add_scalar("Loss/surrogate", locs["mean_surrogate_loss"], locs["it"])
+        self.writer.add_scalar("Loss/srm", locs["mean_srm_loss"], locs["it"])
+        self.writer.add_scalar("Loss/srm_r_loss", locs["mean_r_loss"], locs["it"])
+        self.writer.add_scalar("Loss/srm_rc_loss", locs["mean_rc_loss"], locs["it"])
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
         self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
@@ -231,6 +248,9 @@ class OnPolicyRunner:
                             'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
                 f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
                 f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                f"""{'SRM loss:':>{pad}} {locs["mean_srm_loss"]:.4f}\n"""
+                f"""{'SRM r loss:':>{pad}} {locs["mean_r_loss"]:.5f}\n"""
+                f"""{'SRM rc loss:':>{pad}} {locs["mean_rc_loss"]:.5f}\n"""
                 f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
                 f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
                 f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
@@ -267,7 +287,11 @@ class OnPolicyRunner:
             "optimizer_state_dict": self.alg.optimizer.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
+            "srm_state_dict": self.alg.srm.state_dict(),  # Save SRM state
+            "srm_fc_state_dict": self.alg.srm_fc.state_dict(),  # Save fully connected state
+            "srm_optimizer_state_dict": self.alg.srm_optimizer.state_dict(),  # Save optimizer
         }
+
         if self.empirical_normalization:
             saved_dict["obs_norm_state_dict"] = self.obs_normalizer.state_dict()
             saved_dict["critic_obs_norm_state_dict"] = self.critic_obs_normalizer.state_dict()
@@ -285,6 +309,10 @@ class OnPolicyRunner:
             self.critic_obs_normalizer.load_state_dict(loaded_dict["critic_obs_norm_state_dict"])
         if load_optimizer:
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            self.alg.srm_optimizer.load_state_dict(loaded_dict["srm_optimizer_state_dict"])  # Load GRU optimizer
+        # Load SRM model
+        self.alg.srm.load_state_dict(loaded_dict["srm_state_dict"])
+        self.alg.srm_fc.load_state_dict(loaded_dict["srm_fc_state_dict"])
         self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
 

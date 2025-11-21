@@ -6,7 +6,7 @@
 from isaaclab.utils import configclass
 
 from scripts.co_rl.core.wrapper import (
-    EncoderCfg,
+    # EncoderCfg,
     CoRlPolicyRunnerCfg,
     CoRlPpoActorCriticCfg,
     CoRlPpoAlgorithmCfg,
@@ -43,13 +43,13 @@ class FlamingoPPORunnerCfg(CoRlPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
-    encoder = EncoderCfg(
-        output_detach = True,
-        num_output_dim = 3,
-        hidden_dims = [256, 128],
-        activation = "elu",
-        orthogonal_init = False,
-    )
+    # encoder = EncoderCfg(
+    #     output_detach = True,
+    #     num_output_dim = 3,
+    #     hidden_dims = [256, 128],
+    #     activation = "elu",
+    #     orthogonal_init = False,
+    # )
 
 @configclass
 class FlamingoRoughPPORunnerCfg_Stand_Drive(FlamingoPPORunnerCfg):

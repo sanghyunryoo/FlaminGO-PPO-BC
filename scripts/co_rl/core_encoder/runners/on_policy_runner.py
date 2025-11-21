@@ -12,20 +12,36 @@ from torch.utils.tensorboard import SummaryWriter as TensorboardSummaryWriter
 
 from scripts import co_rl
 from scripts.co_rl.core.algorithms import PPO
+from scripts.co_rl.core.algorithms.ppo_bc import PPO_BC 
 from scripts.co_rl.core.env import VecEnv
-from scripts.co_rl.core.modules import ActorCritic, ActorCriticRecurrent, EmpiricalNormalization
+from scripts.co_rl.core.modules import MLP_Encoder, ActorCritic, ActorCriticRecurrent, EmpiricalNormalization
 from scripts.co_rl.core.utils import store_code_state
 
+def _get(cfg, key, default=None):
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    return getattr(cfg, key, default)
 
 class OnPolicyRunner:
     """On-policy runner for training and evaluation."""
 
     def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
         self.cfg = train_cfg
+        print(f"encoder cfg: {train_cfg.keys()}")
+        self.ecd_cfg = train_cfg["encoder"]
         self.alg_cfg = train_cfg["algorithm"]
         self.policy_cfg = train_cfg["policy"]
 
-        assert self.alg_cfg["class_name"] == "PPO"
+        self.use_bc = _get(train_cfg, "bc_ckpt", None) is not None
+        bc_ckpt = _get(train_cfg, "bc_ckpt", None)
+
+        # === BC 인자 전달 ===
+        if self.use_bc:
+            # 알고리즘을 강제로 PPO_BC로 지정
+            self.alg_cfg["class_name"] = "PPO_BC"
+            self.alg_cfg["bc_ckpt"] = bc_ckpt
+
+        assert self.alg_cfg["class_name"] in ["PPO", "PPO_BC"]
 
         self.device = device
         self.env = env
@@ -35,30 +51,69 @@ class OnPolicyRunner:
             num_critic_obs = extras["observations"]["critic"].shape[1]
         else:
             num_critic_obs = num_obs
-        actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic
-        actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(
-            num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
+
+        if "teacher" in extras["observations"]:
+            num_teacher_obs = extras["observations"]["teacher"].shape[1]
+        else:
+            num_teacher_obs = num_obs
+
+        self.ecd_cfg["num_input_dim"] = num_obs
+        encoder = eval("MLP_Encoder")(
+            **self.ecd_cfg,
         ).to(self.device)
+
+        actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic
+
+        actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(
+            num_obs+ encoder.num_output_dim, num_critic_obs, self.env.num_actions, **self.policy_cfg
+        ).to(self.device)
+        self.alg_class_name = self.alg_cfg["class_name"]
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
+        if self.alg_class_name == "PPO":
+            self.alg_cfg.pop("bc_ckpt", None)
+            self.alg_cfg.pop("bc_coef", None)
+            self.alg_cfg.pop("rl_coef", None)
+            self.alg_cfg.pop("low_rl_coef_ratio", None)
+            self.alg_cfg.pop("high_bc_coef_ratio", None)
+            self.alg_cfg.pop("annealing_factor", None)
+            self.alg_cfg.pop("train_joint_idx", None)
+            self.alg: PPO = alg_class(encoder, actor_critic, device=self.device, **self.alg_cfg)
+        elif self.alg_class_name == "PPO_BC":
+            self.alg: PPO_BC = alg_class(encoder, actor_critic, device=self.device, **self.alg_cfg)
+
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
         if self.empirical_normalization:
             self.obs_normalizer = EmpiricalNormalization(shape=[num_obs], until=1.0e8).to(self.device)
             self.critic_obs_normalizer = EmpiricalNormalization(shape=[num_critic_obs], until=1.0e8).to(self.device)
+            self.teacher_obs_normalizer = EmpiricalNormalization(shape=[num_teacher_obs], until=1.0e8).to(self.device)
         else:
             self.obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
             self.critic_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
+            self.teacher_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
         # init storage and model
-        self.alg.init_storage(
-            self.cfg,
-            self.env.num_envs,
-            self.num_steps_per_env,
-            [num_obs],
-            [num_critic_obs],
-            [self.env.num_actions],
-        )
+        if self.alg_class_name == "PPO":
+            self.alg.init_storage(
+                self.cfg,
+                self.env.num_envs,
+                self.num_steps_per_env,
+                [num_obs],
+                [num_critic_obs],
+                [self.env.num_actions],
+            )
+        elif self.alg_class_name == "PPO_BC":   
+            self.alg.init_storage(
+                self.cfg,
+                self.env.num_envs,
+                self.num_steps_per_env,
+                [num_obs],
+                [num_teacher_obs],
+                [num_critic_obs],
+                [self.env.num_actions],
+            )
+        else:
+            raise NotImplementedError
 
         # Log
         self.log_dir = log_dir
@@ -97,7 +152,8 @@ class OnPolicyRunner:
             )
         obs, extras = self.env.get_observations()
         critic_obs = extras["observations"].get("critic", obs)
-        obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
+        teacher_obs = extras["observations"].get("teacher", obs)
+        obs, critic_obs, teacher_obs = obs.to(self.device), critic_obs.to(self.device), teacher_obs.to(self.device)
         self.train_mode()  # switch to train mode (for dropout for example)
 
         ep_infos = []
@@ -113,7 +169,12 @@ class OnPolicyRunner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions = self.alg.act(obs, critic_obs)
+                    if self.alg_class_name == "PPO":
+                        actions = self.alg.act(obs, critic_obs)
+                    elif self.alg_class_name == "PPO_BC":
+                        actions = self.alg.act(obs, teacher_obs, critic_obs)
+                    else:
+                        raise NotImplementedError
                     obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
                     # move to the right device
                     obs, critic_obs, rewards, dones = (
@@ -128,6 +189,11 @@ class OnPolicyRunner:
                         critic_obs = self.critic_obs_normalizer(infos["observations"]["critic"])
                     else:
                         critic_obs = obs
+                    if "teacher" in infos["observations"]:
+                        teacher_obs = self.teacher_obs_normalizer(infos["observations"]["teacher"])
+                    else:
+                        teacher_obs = obs
+                        
                     # process the step
                     self.alg.process_env_step(rewards, dones, infos)
 
@@ -157,12 +223,18 @@ class OnPolicyRunner:
                 start = stop
                 self.alg.compute_returns(critic_obs)
 
-            mean_value_loss, mean_surrogate_loss = self.alg.update()
+            if self.alg_class_name == "PPO":
+                mean_value_loss, mean_extra_loss, mean_surrogate_loss = self.alg.update()
+                mean_bc_loss = None
+            else:  # PPO_BC
+                mean_value_loss, mean_extra_loss, mean_surrogate_loss, mean_bc_loss = self.alg.update()
+
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
-            if self.log_dir is not None:
+            if self.log_dir is not None:                
                 self.log(locals())
+                self.log(locals(), mean_bc_loss=mean_bc_loss)
             if it % self.save_interval == 0:
                 self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
             ep_infos.clear()
@@ -176,7 +248,7 @@ class OnPolicyRunner:
 
         self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
 
-    def log(self, locs: dict, width: int = 80, pad: int = 35):
+    def log(self, locs: dict, width: int = 80, pad: int = 35, mean_bc_loss=None):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
         self.tot_time += locs["collection_time"] + locs["learn_time"]
         iteration_time = locs["collection_time"] + locs["learn_time"]
@@ -206,7 +278,11 @@ class OnPolicyRunner:
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs["collection_time"] + locs["learn_time"]))
 
         self.writer.add_scalar("Loss/value_function", locs["mean_value_loss"], locs["it"])
+        self.writer.add_scalar("Loss/encoder", locs["mean_extra_loss"], locs["it"])
         self.writer.add_scalar("Loss/surrogate", locs["mean_surrogate_loss"], locs["it"])
+        if mean_bc_loss is not None:
+            self.writer.add_scalar("Loss/bc", mean_bc_loss, locs["it"])
+
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
         self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
@@ -224,32 +300,69 @@ class OnPolicyRunner:
         str = f" \033[1m Learning iteration {locs['it']}/{locs['tot_iter']} \033[0m "
 
         if len(locs["rewbuffer"]) > 0:
-            log_string = (
-                f"""{'#' * width}\n"""
-                f"""{str.center(width, ' ')}\n\n"""
-                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
-                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
-                f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
-                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
-                f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
-                f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
-            )
-            #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
-            #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
+            if self.alg_class_name == "PPO":
+                log_string = (
+                    f"""{'#' * width}\n"""
+                    f"""{str.center(width, ' ')}\n\n"""
+                    f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                                'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                    f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
+                    f"""{'Encoder loss:':>{pad}} {locs['mean_extra_loss']:.4f}\n"""
+                    f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                    f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                    f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
+                    f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
+                )
+                #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
+                #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
+            elif self.alg_class_name == "PPO_BC":
+                log_string = (
+                    f"""{'#' * width}\n"""
+                    f"""{str.center(width, ' ')}\n\n"""
+                    f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                                'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                    f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
+                    f"""{'Encoder loss:':>{pad}} {locs['mean_extra_loss']:.4f}\n"""
+                    f"""{'BC loss:':>{pad}} {locs['mean_bc_loss']:.4f}\n"""
+                    f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                    f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                    f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
+                    f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
+                )
+                #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
+                #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
+            else:
+                raise NotImplementedError
         else:
-            log_string = (
-                f"""{'#' * width}\n"""
-                f"""{str.center(width, ' ')}\n\n"""
-                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
-                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
-                f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
-                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
-            )
-            #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
-            #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
-
+            if self.alg_class_name == "PPO":
+                log_string = (
+                    f"""{'#' * width}\n"""
+                    f"""{str.center(width, ' ')}\n\n"""
+                    f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                                'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                    f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
+                    f"""{'Encoder loss:':>{pad}} {locs['mean_extra_loss']:.4f}\n"""
+                    f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                    f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                )
+                #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
+                #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
+            elif self.alg_class_name == "PPO_BC":
+                log_string = (
+                    f"""{'#' * width}\n"""
+                    f"""{str.center(width, ' ')}\n\n"""
+                    f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                                'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                    f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
+                    f"""{'Encoder loss:':>{pad}} {locs['mean_extra_loss']:.4f}\n"""
+                    f"""{'BC loss:':>{pad}} {mean_bc_loss:.4f}\n"""
+                    f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                    f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                )
+                #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
+                #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
+            else:
+                raise NotImplementedError
         log_string += ep_string
         log_string += (
             f"""{'-' * width}\n"""
@@ -264,6 +377,7 @@ class OnPolicyRunner:
     def save(self, path, infos=None):
         saved_dict = {
             "model_state_dict": self.alg.actor_critic.state_dict(),
+            "encoder_state_dict": self.alg.encoder.state_dict(),
             "optimizer_state_dict": self.alg.optimizer.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
@@ -280,6 +394,7 @@ class OnPolicyRunner:
     def load(self, path, load_optimizer=True):
         loaded_dict = torch.load(path)
         self.alg.actor_critic.load_state_dict(loaded_dict["model_state_dict"])
+        self.alg.encoder.load_state_dict(loaded_dict["encoder_state_dict"])
         if self.empirical_normalization:
             self.obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
             self.critic_obs_normalizer.load_state_dict(loaded_dict["critic_obs_norm_state_dict"])
@@ -299,13 +414,21 @@ class OnPolicyRunner:
             policy = lambda x: self.alg.actor_critic.act_inference(self.obs_normalizer(x))  # noqa: E731
         return policy
 
+    def get_inference_encoder(self, device=None):
+        self.alg.encoder.eval()  # switch to evaluation mode (dropout for example)
+        if device is not None:
+            self.alg.encoder.to(device)
+        return self.alg.encoder
+    
     def train_mode(self):
+        self.alg.encoder.train()
         self.alg.actor_critic.train()
         if self.empirical_normalization:
             self.obs_normalizer.train()
             self.critic_obs_normalizer.train()
 
     def eval_mode(self):
+        self.alg.encoder.eval()
         self.alg.actor_critic.eval()
         if self.empirical_normalization:
             self.obs_normalizer.eval()
