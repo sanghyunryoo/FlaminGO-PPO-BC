@@ -217,10 +217,10 @@ class OnPolicyRunner:
                 self.alg.compute_returns(critic_obs)
 
             if self.alg_class_name == "PPO":
-                mean_value_loss, mean_extra_loss, mean_surrogate_loss = self.alg.update()
+                mean_value_loss, mean_surrogate_loss = self.alg.update()
                 mean_bc_loss = None
             else:  # PPO_BC
-                mean_value_loss, mean_extra_loss, mean_surrogate_loss, mean_bc_loss = self.alg.update()
+                mean_value_loss, mean_surrogate_loss, mean_bc_loss = self.alg.update()
 
             stop = time.time()
             learn_time = stop - start

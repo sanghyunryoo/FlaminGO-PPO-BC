@@ -307,16 +307,12 @@ class PPO_BC:
             mean_surrogate_loss += surrogate_loss.item()
             mean_bc_loss += bc_loss.item()
 
-        num_updates_extra = 0
-        mean_extra_loss = 0
 
         # 결과 리턴
         num_updates = self.num_learning_epochs * self.num_mini_batches
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
-        if num_updates_extra > 0:
-            mean_extra_loss /= num_updates
         self.storage.clear()
         self.rl_coef = max(self.low_rl_coef, self.rl_coef * (1 - self.annealing_factor))  # 점점 줄어들게
         self.bc_coef = min(self.bc_coef * (1 + self.annealing_factor), self.high_bc_coef)  # 최대 2.5배까지 증가)
-        return mean_value_loss, mean_extra_loss, mean_surrogate_loss, mean_bc_loss
+        return mean_value_loss, mean_surrogate_loss, mean_bc_loss
