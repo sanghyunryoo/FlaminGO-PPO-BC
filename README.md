@@ -23,7 +23,7 @@ python scripts/co_rl/train.py \
   --num_critic_stacks 2
 
 ### 2. Train wheel version with PPO-BC
-
+```bash
 python scripts/co_rl/train.py \
   --task Isaac-Velocity-Rough-BC-Flamingo-v1-ppo \
   --num_envs 4096 \
