@@ -5,5 +5,6 @@
 
 from .rollout_storage import RolloutStorage
 from .srm_rollout_storage import SRMRolloutStorage
+from .bc_rollout_storage import BC_RolloutStorage
 
-__all__ = ["RolloutStorage", "SRMRolloutStorage"]
+__all__ = ["RolloutStorage", "BC_RolloutStorage", "SRMRolloutStorage"]

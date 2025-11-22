@@ -77,7 +77,7 @@ class FlamingoRewardsCfg():
         func=mdp.base_height_adaptive_l2,
         weight=-75.0,
         params={
-            "target_height": 0.4535,  # 0.36288
+            "target_height": 0.61282,  # 0.36288
             "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
             "sensor_cfg": SceneEntityCfg("height_scanner"),
         },
@@ -119,7 +119,7 @@ class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.observations.teacher_none_stack_policy.base_pos_z.params["sensor_cfg"] = None
         self.observations.none_stack_critic.base_pos_z.params["sensor_cfg"] = None
 
-        # self.observations.none_stack_policy.height_scan = None # BC-Train -> activate / PPO-Train -> deactivate
+        self.observations.none_stack_policy.height_scan = None # BC-Train -> activate / PPO-Train -> deactivate
         self.observations.none_stack_policy.base_lin_vel = None
         self.observations.none_stack_policy.base_pos_z = None
         self.observations.none_stack_policy.current_reward = None
