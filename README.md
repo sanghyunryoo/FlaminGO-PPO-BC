@@ -13,7 +13,7 @@ A compact fork adding a **rough-terrain PPO–BC framework** for a **two-wheel b
 ## Usage
 
 ### 1. Train point-foot (PF) model
-
+```bash
 python scripts/co_rl/train.py \
   --task Isaac-Velocity-Rough-FlamingoPF-v1-ppo \
   --num_envs 4096 \
