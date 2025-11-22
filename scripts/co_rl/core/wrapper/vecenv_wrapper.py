@@ -260,7 +260,7 @@ class CoRlVecEnvWrapper(VecEnv):
                 obs_dict["stack_critic"], obs_dict["none_stack_critic"]
             )
             obs_dict["critic"] = critic_obs
-
+        
         if hasattr(self, "teacher_state_handler"):
             teacher_obs = self.teacher_state_handler.update(
                 obs_dict["teacher_stack_policy"], obs_dict["teacher_none_stack_policy"]
