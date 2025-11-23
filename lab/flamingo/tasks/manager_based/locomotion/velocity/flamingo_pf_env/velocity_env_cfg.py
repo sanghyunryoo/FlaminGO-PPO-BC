@@ -179,6 +179,13 @@ class ActionsCfg:
         use_default_offset=False,
         preserve_order=True,
     )
+    wheel_vel = mdp.JointVelocityActionCfg(
+        asset_name="robot",
+        joint_names=["left_wheel_joint", "right_wheel_joint"],
+        scale=0.0,
+        use_default_offset=False,
+        preserve_order=True
+    )
 
 
 @configclass
@@ -208,7 +215,7 @@ class ObservationsCfg:
             scale=0.15)  # default: -1.5     
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel_link, scale=0.25)  # default: -0.15
         base_projected_gravity = ObsTerm(func=mdp.projected_gravity)  # default: -0.05
-        actions = ObsTerm(func=mdp.last_action)
+        actions = ObsTerm(func=mdp.last_action_wo_wheel)
 
         def __post_init__(self):
             self.enable_corruption = False
@@ -296,7 +303,7 @@ class ObservationsCfg:
             scale=0.15)  # default: -1.5     
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel_link, noise=Unoise(n_min=-0.15, n_max=0.15), scale=0.25)  # default: -0.15
         base_projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))  # default: -0.05
-        actions = ObsTerm(func=mdp.last_action)
+        actions = ObsTerm(func=mdp.last_action_wo_wheel)
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -360,8 +367,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=[".*hip_joint", ".*shoulder_joint"]),
-            "stiffness_distribution_params": (0.7, 1.3),
-            "damping_distribution_params": (0.7, 1.3),
+            "stiffness_distribution_params": (0.8, 1.2),
+            "damping_distribution_params": (0.8, 1.2),
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -372,8 +379,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*leg_joint"),
-            "stiffness_distribution_params": (0.7, 1.3),
-            "damping_distribution_params": (0.7, 1.3),
+            "stiffness_distribution_params": (0.8, 1.2),
+            "damping_distribution_params": (0.8, 1.2),
             "operation": "scale",
             "distribution": "uniform",
         },
