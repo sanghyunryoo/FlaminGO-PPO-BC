@@ -52,7 +52,8 @@ class CoRlVecEnvWrapper(VecEnv):
         # Determine the number of policy and critic stacks
         self.num_policy_stacks = agent_cfg.num_policy_stacks
         self.num_critic_stacks = agent_cfg.num_critic_stacks
-        self.num_teacher_stacks = agent_cfg.num_teacher_stacks
+        if hasattr(agent_cfg, "num_teacher_stacks"):
+            self.num_teacher_stacks = agent_cfg.num_teacher_stacks
         # Determine if constraint RL is used
         self.use_constraint_rl = agent_cfg.use_constraint_rl
         

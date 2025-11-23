@@ -52,7 +52,8 @@ class CoRlVecEnvWrapper(VecEnv):
         # Determine the number of policy and critic stacks
         self.num_policy_stacks = agent_cfg.num_policy_stacks
         self.num_critic_stacks = agent_cfg.num_critic_stacks
-        self.num_teacher_stacks = agent_cfg.num_teacher_stacks
+        if hasattr(agent_cfg, "num_teacher_stacks"):
+            self.num_teacher_stacks = agent_cfg.num_teacher_stacks
         # Determine if constraint RL is used
         self.use_constraint_rl = agent_cfg.use_constraint_rl
         
@@ -97,7 +98,7 @@ class CoRlVecEnvWrapper(VecEnv):
             self.num_privileged_obs = 0
 
         # -- Teacher observations
-        if hasattr(self.unwrapped, "observation_manager") and "teacher_stack_policy" in group_obs_dim and "teacher_none_stack_policy" in group_obs_dim:
+        if hasattr(agent_cfg, "num_teacher_stacks") and hasattr(self.unwrapped, "observation_manager") and "teacher_stack_policy" in group_obs_dim and "teacher_none_stack_policy" in group_obs_dim:
             stack_teacher_dim = self.unwrapped.observation_manager.group_obs_dim["teacher_stack_policy"][0]
             nonstack_teacher_dim = self.unwrapped.observation_manager.group_obs_dim["teacher_none_stack_policy"][0]
             self.teacher_state_handler = StateHandler(self.num_teacher_stacks + 1, stack_teacher_dim, nonstack_teacher_dim)
@@ -260,7 +261,7 @@ class CoRlVecEnvWrapper(VecEnv):
                 obs_dict["stack_critic"], obs_dict["none_stack_critic"]
             )
             obs_dict["critic"] = critic_obs
-        
+
         if hasattr(self, "teacher_state_handler"):
             teacher_obs = self.teacher_state_handler.update(
                 obs_dict["teacher_stack_policy"], obs_dict["teacher_none_stack_policy"]
