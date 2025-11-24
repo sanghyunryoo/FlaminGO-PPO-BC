@@ -32,3 +32,4 @@ __version__ = FLAMINGO_ASSETS_METADATA["package"]["version"]
 ##
 
 from .flamingo_rev03_2_1 import *
+from .flamingo_rev03_2_1_pf import *

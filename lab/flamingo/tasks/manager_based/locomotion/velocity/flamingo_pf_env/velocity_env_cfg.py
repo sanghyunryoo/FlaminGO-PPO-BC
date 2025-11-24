@@ -39,6 +39,7 @@ from lab.flamingo.tasks.manager_based.locomotion.velocity.terrain_config.stair_c
 ##
 
 
+
 @configclass
 class MySceneCfg(InteractiveSceneCfg):
     """Configuration for the terrain scene with a legged robot."""
@@ -178,13 +179,6 @@ class ActionsCfg:
         scale=1.0,
         use_default_offset=False,
         preserve_order=True,
-    )
-    wheel_vel = mdp.JointVelocityActionCfg(
-        asset_name="robot",
-        joint_names=["left_wheel_joint", "right_wheel_joint"],
-        scale=0.0,
-        use_default_offset=False,
-        preserve_order=True
     )
 
 
@@ -381,18 +375,6 @@ class EventCfg:
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*leg_joint"),
             "stiffness_distribution_params": (0.8, 1.2),
             "damping_distribution_params": (0.8, 1.2),
-            "operation": "scale",
-            "distribution": "uniform",
-        },
-    )
-
-    randomize_wheel_actuator_gains = EventTerm(
-        func=mdp.randomize_actuator_gains,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=".*wheel_joint"),
-            "stiffness_distribution_params": (0.7, 1.3),
-            "damping_distribution_params": (0.7, 1.3),
             "operation": "scale",
             "distribution": "uniform",
         },

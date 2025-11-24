@@ -1319,6 +1319,17 @@ def stay_alive(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Reward for staying alive."""
     return torch.ones(env.num_envs, device=env.device)
 
+def no_fly(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, threshold: float = 1.0) -> torch.Tensor:
+    """Reward if only one foot is in contact with the ground."""
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    latest_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, :, 2]
+
+    contacts = latest_contact_forces > threshold
+    single_contact = torch.sum(contacts.float(), dim=1) == 1
+
+    return 1.0 * single_contact
+
 def stand_still(
     env, lin_threshold: float = 0.05, ang_threshold: float = 0.05, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:

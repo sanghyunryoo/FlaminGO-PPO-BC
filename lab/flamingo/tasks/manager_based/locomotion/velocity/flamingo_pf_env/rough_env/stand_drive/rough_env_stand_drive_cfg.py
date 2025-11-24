@@ -15,7 +15,7 @@ from lab.flamingo.tasks.manager_based.locomotion.velocity.flamingo_pf_env.veloci
     CurriculumCfg,
 )
 
-from lab.flamingo.assets.flamingo.flamingo_rev03_2_1 import FLAMINGO_CFG  # isort: skip
+from lab.flamingo.assets.flamingo.flamingo_rev03_2_1_pf import FLAMINGO_PF_CFG  # isort: skip
 
 
 @configclass
@@ -99,7 +99,7 @@ class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # post init of parent
         super().__post_init__()
         # scene
-        self.scene.robot = FLAMINGO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot = FLAMINGO_PF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
        #! ************** scene & observations setup - 0 *********** !#
         # self.scene.base_height_scanner = None
@@ -193,7 +193,7 @@ class FlamingoRoughEnvCfg_PLAY(FlamingoRoughEnvCfg):
             self.scene.terrain.terrain_generator.curriculum = True
         
         # scene
-        self.scene.robot = FLAMINGO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.scene.robot = FLAMINGO_PF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
         #! ****************** Observations setup ******************* !#
         # disable randomization for play
