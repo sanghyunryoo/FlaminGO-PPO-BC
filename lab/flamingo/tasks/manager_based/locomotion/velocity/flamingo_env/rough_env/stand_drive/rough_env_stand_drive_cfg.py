@@ -53,11 +53,11 @@ class FlamingoRewardsCfg():
         weight=-1.0,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*_leg_joint")},
     )
-    same_foot_x_position = RewTerm(
-        func=mdp_drive.reward_same_foot_x_position,
-        weight=-5.0,
-        params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*_wheel_static_link"])},
-    )
+    # same_foot_x_position = RewTerm(
+    #     func=mdp_drive.reward_same_foot_x_position,
+    #     weight=-5.0,
+    #     params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*_wheel_static_link"])},
+    # )
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,    
         weight=-0.5,
@@ -71,17 +71,17 @@ class FlamingoRewardsCfg():
         weight=-0.1,  # default: -0.1
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*_joint")},
     )
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-7.5)
+    # flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-7.5)
     
-    base_range_height = RewTerm(
-        func=mdp.base_height_adaptive_l2,
-        weight=-75.0,
-        params={
-            "target_height": 0.61282,  # 0.36288
-            "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
-            "sensor_cfg": SceneEntityCfg("height_scanner"),
-        },
-    )
+    # base_range_height = RewTerm(
+    #     func=mdp.base_height_adaptive_l2,
+    #     weight=-75.0,
+    #     params={
+    #         "target_height": 0.61282,  # 0.36288
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
+    #         "sensor_cfg": SceneEntityCfg("height_scanner"),
+    #     },
+    # )
     dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-5.0e-6) # default: -5.0e-5
     dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)  # default: -2.5e-7
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.03)  # default: -0.01
@@ -89,7 +89,43 @@ class FlamingoRewardsCfg():
         func=mdp.stay_alive,
         weight=2.0
     )
-
+    com_over_support_xy = RewTerm(
+        func=mdp.com_over_support_xy_l2,
+        weight=-3.0,   # 초반엔 -1.0 ~ -5.0 사이에서 튜닝해보는 걸 추천
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "support_cfg": SceneEntityCfg(
+                "robot",
+                body_names=["left_wheel_static_link", "right_wheel_static_link"],
+            ),
+        },
+    )
+    pen_feet_distance = RewTerm(
+        func=mdp.feet_distance,
+        weight=-100,
+        params={"min_feet_distance": 0.3,
+                "max_feet_distance": 0.35,
+                "feet_links_name": ["left_wheel_static_link", "right_wheel_static_link"]}
+    )
+    lin_speed_over_limit = RewTerm(
+        func=mdp.lin_speed_over_limit_l2,
+        weight=-5.0,  # 너무 세면 아예 안 달리려고 할 수 있으니 -1~-10 사이 튜닝
+        params={"limit": 1.2, "asset_cfg": SceneEntityCfg("robot")},
+    )    
+    stable_single_leg = RewTerm(
+        func=mdp.stable_single_leg_stance,
+        weight=2.0,  # 우선 1.0~3.0 사이에서 시작해 보고 튜닝
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["left_wheel_link", "right_wheel_link"]
+            ),
+            "contact_threshold": 5.0,
+            "ori_margin": 0.4,
+        },
+    )    
+    
 @configclass
 class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
@@ -151,7 +187,7 @@ class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         }
         # add base mass should be called here
         self.events.add_base_mass.params["asset_cfg"].body_names = ["base_link"]
-        self.events.add_base_mass.params["mass_distribution_params"] = (-1.5, 3.0)
+        self.events.add_base_mass.params["mass_distribution_params"] = (-3.0, 3.0)
 
         # physics material should be called here
         self.events.physics_material.params["asset_cfg"].body_names = [".*_link"]
@@ -171,7 +207,7 @@ class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # commands
         self.commands.base_velocity.resampling_time_range = (1.0, 8.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.75)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (-0.0, 0.0)
         self.commands.base_velocity.ranges.pos_z = (0.0, 0.0)
@@ -179,9 +215,6 @@ class FlamingoRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # terminations
         self.terminations.base_contact.params["sensor_cfg"].body_names = [
             "base_link",
-            ".*_hip_link",
-            ".*_shoulder_link",
-            ".*_leg_link",
         ]
 
 
@@ -212,7 +245,7 @@ class FlamingoRoughEnvCfg_PLAY(FlamingoRoughEnvCfg):
         #! ********************************************************* !#
 
         self.commands.base_velocity.resampling_time_range = (1.0, 8.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.75)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (-0.0, 0.0)
         self.commands.base_velocity.ranges.pos_z = (0.0, 0.0)
@@ -220,8 +253,4 @@ class FlamingoRoughEnvCfg_PLAY(FlamingoRoughEnvCfg):
          # terminations
         self.terminations.base_contact.params["sensor_cfg"].body_names = [
             "base_link",
-            "left_leg_link",
-            "right_leg_link",
-            "left_shoulder_link",
-            "right_shoulder_link",
         ]

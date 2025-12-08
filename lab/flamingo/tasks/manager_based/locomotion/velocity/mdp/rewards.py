@@ -1330,6 +1330,47 @@ def no_fly(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg, threshold: float 
 
     return 1.0 * single_contact
 
+def pitch_limit_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["base_link"]),
+) -> torch.Tensor:
+    """Penalize pitch angle (forward/backward tilt) using L2.
+
+    - base_link 쿼터니언을 오일러로 변환
+    - pitch를 [-pi, pi] 범위로 매핑
+    - pitch^2 를 반환해서 크게 숙일수록 더 큰 penalty
+    """
+    # base_link 가져오기
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # world frame에서의 roll, pitch, yaw
+    r, p, _ = euler_xyz_from_quat(asset.data.root_link_quat_w)
+
+    # [0, 2*pi] 범위를 [-pi, pi]로 매핑
+    pitch = (p + math.pi) % (2 * math.pi) - math.pi
+
+    # 0(rad)에서의 L2 penalty
+    return torch.square(pitch)
+
+
+def body_lin_acc_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """몸(링크)들의 선형 가속도가 클수록 페널티를 주는 항.
+
+    - asset_cfg.body_ids 에 지정된 링크들의 world 기준 선형 가속도 사용
+    - 각 링크의 ||a|| 를 더해서 배치별 스칼라 값으로 반환
+    """
+    # 로봇 articulation 가져오기
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    # [num_envs, num_bodies, 3] : 각 링크의 선형 가속도 (world frame)
+    lin_acc = asset.data.body_lin_acc_w[:, asset_cfg.body_ids, :]
+
+    # 각 링크의 가속도 norm → env마다 전부 합산 → [num_envs]
+    return torch.sum(torch.norm(lin_acc, dim=-1), dim=1)
+
 def stand_still(
     env, lin_threshold: float = 0.05, ang_threshold: float = 0.05, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
@@ -1372,3 +1413,106 @@ def leg_symmetry(env: ManagerBasedRLEnv,
     leg_symmetry_err = torch.abs(feet_pos_b[:, 0, 1]) - torch.abs(feet_pos_b[:, 1, 1])
 
     return torch.exp(-leg_symmetry_err ** 2 / std**2)
+
+def com_over_support_xy_l2(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    support_cfg: SceneEntityCfg = SceneEntityCfg(
+        "robot",
+        body_names=["left_wheel_static_link", "right_wheel_static_link"],
+    ),
+):
+    """CoM가 두 바퀴(지지선) 중심에서 얼마나 멀리 떨어져 있는지 XY 평면에서 L2 penalty.
+
+    - env: ManagerBasedRLEnv
+    - asset_cfg: 로봇 전체 (기본값 "robot")
+    - support_cfg: 지지점(여기서는 두 바퀴 링크들을 사용)
+    반환:
+        shape: (num_envs,)  — 각 env마다 (CoM_xy - support_center_xy)^2 의 합
+    """
+    # 로봇 articulation
+    asset = env.scene[asset_cfg.name]
+
+    # 루트 CoM world position: [x, y, z, qw, qx, qy, qz] 중 pos 부분만 사용
+    # root_com_pose_w: (num_envs, 7)
+    root_com_pos_w = asset.data.root_com_pos_w
+    com_xy = root_com_pos_w[:, :2]  # (num_envs, 2)
+
+    # 바퀴 링크들의 world pose: (num_envs, num_bodies, 7)
+    body_poses = asset.data.body_link_pos_w
+    wheel_ids = support_cfg.body_ids  # 두 바퀴의 body index들
+    wheel_pos = body_poses[:, wheel_ids, :3]           # (num_envs, num_wheels, 3)
+    support_xy = wheel_pos[:, :, :2].mean(dim=1)       # (num_envs, 2) 두 바퀴 중심
+
+    diff_xy = com_xy - support_xy                      # (num_envs, 2)
+    # XY 거리의 제곱합 -> L2 penalty
+    return torch.sum(diff_xy * diff_xy, dim=-1)
+
+def lin_speed_over_limit_l2(env, limit: float = 1.2, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
+    base_lin_vel = env.scene[asset_cfg.name].data.root_lin_vel_w[:, 0]  # x 방향 속도
+    excess = torch.clamp(torch.abs(base_lin_vel) - limit, min=0.0)
+    return excess * excess
+
+def feet_distance(env: ManagerBasedRLEnv,
+                  asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+                  feet_links_name: list[str]=["foot_[RL]_Link"],
+                  min_feet_distance: float = 0.1,
+                  max_feet_distance: float = 1.0,)-> torch.Tensor:
+    # Penalize base height away from target
+    asset: Articulation = env.scene[asset_cfg.name]
+    feet_links_idx = asset.find_bodies(feet_links_name)[0]
+    feet_pos = asset.data.body_link_pos_w[:,feet_links_idx]
+    # feet distance on x-y plane
+    feet_distance = torch.norm(feet_pos[:, 0, :2] - feet_pos[:, 1, :2], dim=-1)
+    reward = torch.clip(min_feet_distance - feet_distance, 0, 1)
+    reward += torch.clip(feet_distance - max_feet_distance, 0, 1)
+    return reward
+
+def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize non-flat base orientation using L2 squared kernel.
+
+    This is computed by penalizing the xy-components of the projected gravity vector.
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
+
+def stable_single_leg_stance(
+    env: ManagerBasedRLEnv,
+    # 로봇 자세(orientation)용
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    # 접지 여부 확인용 (왼/오른 바퀴)
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg(
+        "contact_forces", body_names=["left_wheel_link", "right_wheel_link"]
+    ),
+    contact_threshold: float = 5.0,   # N 정도, 상황에 맞게 조정
+    ori_margin: float = 0.4,         # rad 정도. bad_orientation limit(0.7) 보다 훨씬 작게
+) -> torch.Tensor:
+    """한쪽 바퀴만 닿아 있고 + 로봇이 비교적 수평일 때 큰 보상을 주는 term."""
+    # 로봇 / 센서 핸들
+    robot = env.scene[asset_cfg.name]
+    contact_sensor = env.scene[sensor_cfg.name]
+
+    # 접촉 힘: (num_envs, B, 3)  -- B=2 (left/right wheel) 이라고 가정
+    forces = contact_sensor.data.net_forces_w      # [N, 2, 3]
+    # z 축(normal) 힘만 사용
+    fz = forces[..., 2].abs()                      # [N, 2]
+
+    # 접지 여부 (threshold 이상이면 contact로 간주)
+    contact = (fz > contact_threshold).float()     # [N, 2]
+    num_contacts = contact.sum(dim=-1)             # [N]
+
+    # 정확히 한쪽만 닿아있는 경우만 1, 나머지는 0
+    single_support = (num_contacts == 1.0).float() # [N]
+
+    # 자세 안정성: flat_orientation_l2 결과(roll^2 + pitch^2 같은 것)를 가져다가 soft하게 스케일링
+    # 이미 mdp.flat_orientation_l2(env, asset_cfg=SceneEntityCfg("robot")) 함수가 존재한다고 가정
+    ori_error = flat_orientation_l2(env, asset_cfg=asset_cfg)  # [N]
+    # ori_margin 근처까지는 거의 1, 그 이상 틀어지면 급격히 줄어드는 형태
+    # (ori_error가 rad^2 스케일이라고 보면, ori_margin^2 로 나눠줌)
+    safe_ori_score = torch.exp(-(ori_error / (ori_margin ** 2)))  # [N], 0~1
+
+    # single_support 이면서 자세가 안정적일수록 큰 값
+    reward = single_support * safe_ori_score
+
+    return reward

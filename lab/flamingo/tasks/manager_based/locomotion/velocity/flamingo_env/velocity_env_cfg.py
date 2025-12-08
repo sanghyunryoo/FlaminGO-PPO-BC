@@ -193,7 +193,7 @@ class ActionsCfg:
     wheel_vel = mdp.JointVelocityActionCfg(
         asset_name="robot",
         joint_names=["left_wheel_joint", "right_wheel_joint"],
-        scale=20.0,
+        scale=10.0,
         use_default_offset=False,
         preserve_order=True
     )
@@ -289,6 +289,8 @@ class ObservationsCfg:
         feet_contact_force = ObsTerm(
             func=mdp.contact_force, params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_wheel_link")}
         )
+        robot_com = ObsTerm(func=mdp.center_of_mass, params={"asset_cfg": SceneEntityCfg("robot")})
+        
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
@@ -319,7 +321,7 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-
+    
     @configclass
     class TeacherStackPolicyCfg(ObsGroup):
         """Observations for Stack policy group."""
@@ -337,8 +339,8 @@ class ObservationsCfg:
                 "gear_ratio": -1.5,
             },            
             scale=0.15)  # default: -1.5     
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel_link, noise=Unoise(n_min=-0.15, n_max=0.15), scale=0.25)  # default: -0.15
-        base_projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))  # default: -0.05
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel_link, scale=0.25)  # default: -0.15
+        base_projected_gravity = ObsTerm(func=mdp.projected_gravity)  # default: -0.05
         actions = ObsTerm(func=mdp.last_action_wo_wheel)
 
         def __post_init__(self):
@@ -355,7 +357,6 @@ class ObservationsCfg:
             func=mdp.height_scan,
             params={"sensor_cfg": SceneEntityCfg("height_scanner"), 'offset': 0.0},
             clip=(-1.0, 1.0),
-            noise=Unoise(n_min=-0.1, n_max=0.1),
         )
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel_x_link, scale=2.0)
         base_pos_z = ObsTerm(func=mdp.base_pos_z_rel_link, params={"sensor_cfg": SceneEntityCfg("base_height_scanner")})
@@ -427,8 +428,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "static_friction_range": (0.8, 1.0),
-            "dynamic_friction_range": (0.6, 0.8),
+            "static_friction_range": (0.3, 1.0),
+            "dynamic_friction_range": (0.3, 0.8),
             "restitution_range": (0.0, 0.0),
             "num_buckets": 64,
         },
@@ -475,7 +476,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
-            "com_distribution_params": (-0.05, 0.05),
+            "com_distribution_params": (-0.1, 0.1),
             "operation": "add",
         },
     )
@@ -549,7 +550,10 @@ class TerminationsCfg:
         params={"asset_cfg": SceneEntityCfg("robot"), "distance_buffer": 3.0},
         time_out=True,
     )
-
+    bad_orientation = DoneTerm(
+        func=mdp.bad_orientation,
+        params={"asset_cfg": SceneEntityCfg("robot"), "limit_angle": 0.7},
+    )   
 
 @configclass
 class CurriculumCfg:

@@ -70,13 +70,13 @@ class FlamingoRoughPPOBCRunnerCfg_Stand_Drive(FlamingoPPORunnerCfg):
         self.max_iterations = 5000
         self.experiment_name = "Flamingo_Rough_Stand_Drive"
         self.policy.actor_hidden_dims = [512, 256, 128]
-        self.policy.critic_hidden_dims = [512, 256, 128]
+        self.policy.critic_hidden_dims = [512, 256, 128]    
         self.algorithm.class_name = 'PPO_BC'
         self.algorithm.bc_coef = 1.0
-        self.algorithm.rl_coef = 0.5
-        self.algorithm.low_rl_coef_ratio = 0.25
-        self.algorithm.high_bc_coef_ratio = 2.0
-        self.algorithm.annealing_factor = 0.001
+        self.algorithm.rl_coef = 1.0
+        self.algorithm.low_rl_coef_ratio = 0.5
+        self.algorithm.high_bc_coef_ratio = 3.0
+        self.algorithm.annealing_factor = 0.01 
         self.algorithm.train_joint_idx = [0, 1, 2, 3, 4, 5, 6, 7]
 
 @configclass
