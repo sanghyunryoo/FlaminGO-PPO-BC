@@ -35,22 +35,22 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
         # "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
         #     proportion=0.1, noise_range=(0.0, 0.1), noise_step=0.02, border_width=0.25
         # ),
-        # "pyramid_stairs_easy": MeshInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.2,
-        #     step_height_range=(0.025, 0.1),
-        #     step_width=0.3,
-        #     platform_width=2.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
-        # "pyramid_stairs_medium": MeshInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.3,
-        #     step_height_range=(0.05, 0.15),
-        #     step_width=0.3,
-        #     platform_width=2.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
+        "pyramid_stairs_easy": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.2,
+            step_height_range=(0.025, 0.1),
+            step_width=0.3,
+            platform_width=2.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "pyramid_stairs_medium": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.3,
+            step_height_range=(0.05, 0.15),
+            step_width=0.3,
+            platform_width=2.0,
+            border_width=1.0,
+            holes=False,
+        ),
         "pyramid_stairs_hard": MeshInvertedPyramidStairsTerrainCfg(
             proportion=0.8,
             step_height_range=(0.0, 0.25),

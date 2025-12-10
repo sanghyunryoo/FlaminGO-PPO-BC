@@ -161,6 +161,8 @@ class PPO_BC:
         # Compute the actions and values
 
         self.transition.actions = self.actor_critic.act(obs).detach()
+        self.teacher_actions = self.teacher.act_inference(teacher_obs).detach() if self.teacher is not None else None
+        self.transition.actions = torch.concat([self.teacher_actions[..., :6], self.transition.actions[..., 6:]], dim=-1) if self.teacher is not None else self.transition.actions
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()
@@ -290,12 +292,12 @@ class PPO_BC:
                 mu_s = self.actor_critic.action_mean[..., :6]
 
                 # 3) MSE BC loss
-                bc_loss = ((mu_s - mu_t).pow(2).mean(dim=-1)).mean()
+                # bc_loss = ((mu_s - mu_t).pow(2).mean(dim=-1)).mean()
             # -----------------------------
             # 최종 Loss
             # -----------------------------
             rl_loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
-            loss = self.rl_coef * rl_loss + self.bc_coef * bc_loss
+            loss = rl_loss
 
             # gradient step
             self.optimizer.zero_grad()

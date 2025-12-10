@@ -100,13 +100,13 @@ class FlamingoRewardsCfg():
             ),
         },
     )
-    pen_feet_distance = RewTerm(
-        func=mdp.feet_distance,
-        weight=-100,
-        params={"min_feet_distance": 0.3,
-                "max_feet_distance": 0.35,
-                "feet_links_name": ["left_wheel_static_link", "right_wheel_static_link"]}
-    )
+    # pen_feet_distance = RewTerm(
+    #     func=mdp.feet_distance,
+    #     weight=-100,
+    #     params={"min_feet_distance": 0.25,
+    #             "max_feet_distance": 0.4,
+    #             "feet_links_name": ["left_wheel_static_link", "right_wheel_static_link"]}
+    # )
     lin_speed_over_limit = RewTerm(
         func=mdp.lin_speed_over_limit_l2,
         weight=-5.0,  # 너무 세면 아예 안 달리려고 할 수 있으니 -1~-10 사이 튜닝
