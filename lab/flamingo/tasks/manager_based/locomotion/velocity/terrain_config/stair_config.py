@@ -53,7 +53,7 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
         ),
         "pyramid_stairs_hard": MeshInvertedPyramidStairsTerrainCfg(
             proportion=0.8,
-            step_height_range=(0.0, 0.25),
+            step_height_range=(0.1, 0.25),
             step_width=0.3,
             platform_width=2.0,
             border_width=1.0,
