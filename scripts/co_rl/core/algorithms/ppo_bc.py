@@ -165,7 +165,7 @@ class PPO_BC:
         self.transition.actions = torch.concat([self.teacher_actions[..., :6], self.transition.actions[..., 6:]], dim=-1) if self.teacher is not None else self.transition.actions
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
-        self.transition.action_mean = self.actor_critic.action_mean.detach()
+        self.transition.action_mean = torch.concat([self.teacher_actions[..., :6], self.actor_critic.action_mean[..., 6:]], dim=-1).detach() if self.teacher is not None else self.actor_critic.action_mean.detach()
         self.transition.action_sigma = self.actor_critic.action_std.detach()
         # need to record obs and critic_obs before env.step()
         self.transition.observations = obs
